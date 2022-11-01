@@ -1,0 +1,25 @@
+float4 hamiltonProduct(float4 v1, float4 v2)
+{
+    float a1 = v1.w;
+    float b1 = v1.x;
+    float c1 = v1.y;
+    float d1 = v1.z;
+
+    float a2 = v2.w;
+    float b2 = v2.x;
+    float c2 = v2.y;
+    float d2 = v2.z;
+
+    const float w = a1 * a2 - b1 * b2 - c1 * c2 - d1 * d2;
+    const float i = a1 * b2 + b1 * a2 + c1 * d2 - d1 * c2;
+    const float j = a1 * c2 - b1 * d2 + c1 * a2 + d1 * b2;
+    const float k = a1 * d2 + b1 * c2 - c1 * b2 + d1 * a2;
+    return float4(i, j, k, w);
+}
+
+/// quat = (x,y,z,w)
+float4 rotateVector(float4 vec, float4 quat)
+{
+    float4 quat_p = float4(-quat.xyz, quat.w);
+    return hamiltonProduct(hamiltonProduct(quat, vec), quat_p);
+}

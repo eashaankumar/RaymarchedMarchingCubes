@@ -1,0 +1,206 @@
+#pragma kernel CSMain
+
+#include "../Noise.compute"
+
+RWTexture2D<float4> Destination;
+RWStructuredBuffer<uint> voxels;
+
+float4x4 _CameraToWorld;
+float4x4 _CameraInverseProjection;
+float scale;
+float amplitude;
+int voxelsPerAxis;
+float3 _LightDirection; // must be normalized!
+// colors
+float3 _AmbientColor;
+float3 _GrassColor;
+float3 _SandColor;
+float3 _WaterColor;
+float3 _DirtColor;
+
+static const float epsilon = 0.01f;
+static const int maxStepCount = 500
+;
+static const float3 planetCenter;
+static const float planetRadius = 100;
+static const float3 noisePosition;
+
+struct Ray {
+    float3 origin;
+    float3 direction;
+};
+
+Ray CreateRay(float3 origin, float3 direction) {
+    Ray ray;
+    ray.origin = origin;
+    ray.direction = direction;
+    return ray;
+}
+
+Ray CreateCameraRay(float2 uv) {
+    float3 origin = mul(_CameraToWorld, float4(0, 0, 0, 1)).xyz;
+    float3 direction = mul(_CameraInverseProjection, float4(uv, 0, 1)).xyz;
+    direction = mul(_CameraToWorld, float4(direction, 0)).xyz;
+    direction = normalize(direction);
+    return CreateRay(origin, direction);
+}
+
+float sdSphere(float3 p, float d) { return length(p - planetCenter) - d; }
+
+int to1D(int x, int y, int z) {
+    return (voxelsPerAxis * voxelsPerAxis * z) + (y * voxelsPerAxis) + x;
+}
+
+
+float lerpF(float a, float b, float w) {
+    return a + w * (b - a);
+}
+
+/// https://www.decarpentier.nl/scape-procedural-basics
+float ridgedNoise(float3 p)
+{
+    return 1.0f - abs(snoise(normalize(p)));
+}
+
+float ridgedNoise2(float3 p, int octaves, int lacunarity, int gain)
+{
+    float noise = snoise(p);
+    for (int i = 1; i < octaves; i++)
+    {
+        noise += snoise(p * lacunarity * i) / (gain * i);
+    }
+    return noise;
+}
+
+bool getVoxel(int3 c)
+{
+    float3 p = float3(c) +float3(1,1,1) * 0.5;
+    const float3 off = float3(2134, 213, 24);
+    float d = distance(p, planetCenter);
+    //float height = (snoise(normalize(p) * scale)) * amplitude;
+    float3 pp = p + noisePosition;
+    float noise = lerpF(-1.0, 1.0, d / (planetRadius * 2));
+    return noise + (ridgedNoise2(normalize(pp * scale), 3, 2.0, 2.0) * 2 - 1) * amplitude < 0;
+    //return noise < 0;
+    //int i = to1D(c.x, c.y, c.z);
+    //if (i < 0 || i >= voxelsPerAxis * voxelsPerAxis * voxelsPerAxis) return false;
+   // return voxels[i] != 0;
+}
+
+float3 getColorAtVoxel(int3 mapPos)
+{
+    float3 p = float3(mapPos)+float3(1, 1, 1) * 0.5;
+    float planetHeight = distance(p,planetCenter) - planetRadius;
+    if (planetHeight < 0) return _WaterColor;
+    if (planetHeight < 3) return _SandColor;
+    if (planetHeight < 10) return _DirtColor;
+    if (planetHeight < 15) return _GrassColor;
+    return float3(1,1,1);
+
+    /*const float3 off = float3(12, 1, -33);
+    float3 pp = p + noisePosition;
+    float noise = ridgedNoise2(normalize(pp * 0.1), 1, 2.0, 2.0) * 0.5;
+    if (noise < 0.15) return _SandColor;
+    if (noise < 0.25) return _DirtColor;
+    return _GrassColor;*/
+}
+
+float3 raymarchDDA(float3 o, float3 dir)
+{
+    // https://www.shadertoy.com/view/4dX3zl
+    float3 p = o;
+    // which box of the map we're in
+    int3 mapPos = int3(floor(p));
+    // length of ray from one xyz-side to another xyz-sideDist
+    float3 deltaDist = abs(float3(1,1,1) * length(dir) / dir);
+    int3 rayStep = int3(sign(dir));
+    // length of ray from current position to next xyz-side
+    float3 sideDist = (sign(dir) * (float3(mapPos.x, mapPos.y, mapPos.z) - o) + (sign(dir) * 0.5) + 0.5) * deltaDist;
+    bool3 mask;
+    bool miss = false;
+    for (int i = 0; i < maxStepCount; i++) {
+        if (getVoxel(mapPos)) break;
+        if (sideDist.x < sideDist.y) {
+            if (sideDist.x < sideDist.z) {
+                sideDist.x += deltaDist.x;
+                mapPos.x += rayStep.x;
+                mask = bool3(true, false, false);
+            }
+            else {
+                sideDist.z += deltaDist.z;
+                mapPos.z += rayStep.z;
+                mask = bool3(false, false, true);
+            }
+        }
+        else {
+            if (sideDist.y < sideDist.z) {
+                sideDist.y += deltaDist.y;
+                mapPos.y += rayStep.y;
+                mask = bool3(false, true, false);
+            }
+            else {
+                sideDist.z += deltaDist.z;
+                mapPos.z += rayStep.z;
+                mask = bool3(false, false, true);
+            }
+        }
+        if (i == maxStepCount - 1)
+        {
+            miss = true;
+        }
+    }
+
+    float d = distance(o, mapPos);
+
+    float3 color;
+    if (miss)
+    {
+        color = float3(0, 0, 0);
+    }
+    else {
+        /*if (mask.x) {
+            color = float3(0.5, 0.5, 0.5);
+        }
+        if (mask.y) {
+            color = float3(1,1,1);
+        }
+        if (mask.z) {
+            color = float3(0.75, 0.75, 0.75);
+        }*/
+        //float3 fakeNorm = float3(mask);
+        float3 planetNorm = normalize(mapPos - planetCenter);
+        float diff = dot(planetNorm, _LightDirection);
+        float diffIntensity = 1;
+        float3 voxelColor = getColorAtVoxel(mapPos);
+        float3 diffuseColor = float3(1, 1, 1) * diffIntensity;
+        float3 diffuse = saturate(diff * diffuseColor);
+        color = (diffuse + _AmbientColor) * voxelColor;
+        // depth blur
+        //color *= (1 - d / maxStepCount * 1.75);
+    }
+    return color;
+}
+
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    Destination.GetDimensions(width, height);
+
+    float2 uv = id.xy / float2(width, height);
+
+    // Background gradient
+
+    // Raymarching:
+    Ray ray = CreateCameraRay(uv * 2 - 1);
+    float rayDst = 0;
+    int marchSteps = 0;
+
+    float4 result = float4(ray.direction * 0.5 + 0.5, 0);
+    
+
+    result.xyz = raymarchDDA(ray.origin, ray.direction);
+
+    Destination[id.xy] = result;
+}
