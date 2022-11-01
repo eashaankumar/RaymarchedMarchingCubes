@@ -1,14 +1,14 @@
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Jobs;
 using UnityEngine;
 
-[ExecuteInEditMode]
 public class MarchingCubesRayMarch : MonoBehaviour
 {
     [SerializeField]
     float scale;
     [SerializeField]
-    float amplitude;
+    float impact;
     [Header("Generator settings")]
     [SerializeField]
     Color ambientColor;
@@ -20,10 +20,14 @@ public class MarchingCubesRayMarch : MonoBehaviour
     Color sandColor;
     [SerializeField]
     Color waterColor;
+    [SerializeField]
+    float brushStrength;
+    [SerializeField]
+    int brushSize;
 
     public ComputeShader voxelShader;
 
-    RenderTexture target;
+    RenderTexture target, density;
     Camera cam;
     Light directionalLight;
 
@@ -50,12 +54,16 @@ public class MarchingCubesRayMarch : MonoBehaviour
         int threadGroupsY = Mathf.CeilToInt(cam.pixelHeight / 8.0f);
         voxelShader.Dispatch(0, threadGroupsX, threadGroupsY, 1);
 
+        
+
         Graphics.Blit(target, destination, new Vector2(-1, -1), new Vector2(1, 1));
     }
 
     void SetParameters()
     {
+        brushStrength = Mathf.Abs(brushStrength);
         voxelShader.SetTexture(0, "Destination", target);
+        voxelShader.SetTexture(0, "Density", density);
         voxelShader.SetMatrix("_CameraToWorld", cam.cameraToWorldMatrix);
         voxelShader.SetMatrix("_CameraInverseProjection", cam.projectionMatrix.inverse);
         voxelShader.SetVector("_LightDirection", directionalLight.transform.forward);
@@ -64,7 +72,11 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetVector("_SandColor", new Vector3(sandColor.r, sandColor.g, sandColor.b));
         voxelShader.SetVector("_DirtColor", new Vector3(dirtColor.r, dirtColor.g, dirtColor.b));
         voxelShader.SetVector("_WaterColor", new Vector3(waterColor.r, waterColor.g, waterColor.b));
-
+        voxelShader.SetFloat("_Scale", scale);
+        voxelShader.SetFloat("_Impact", impact);
+        voxelShader.SetBool("_Terraforming", Input.GetMouseButton(0));
+        voxelShader.SetFloat("_BrushStrength", brushStrength);
+        voxelShader.SetInt("_BrushSize", brushSize);
     }
 
     void InitRenderTexture()
@@ -79,5 +91,43 @@ public class MarchingCubesRayMarch : MonoBehaviour
             target.enableRandomWrite = true;
             target.Create();
         }
+        Create3DTexture(ref density, 1000, "Density");
     }
+
+    void Create3DTexture(ref RenderTexture texture, int size, string name)
+    {
+        //
+        var format = UnityEngine.Experimental.Rendering.GraphicsFormat.R32_SFloat;
+        if (texture == null || !texture.IsCreated() || texture.width != size || texture.height != size || texture.volumeDepth != size || texture.graphicsFormat != format)
+        {
+            //Debug.Log ("Create tex: update noise: " + updateNoise);
+            if (texture != null)
+            {
+                texture.Release();
+            }
+            const int numBitsInDepthBuffer = 0;
+            texture = new RenderTexture(size, size, numBitsInDepthBuffer);
+            texture.graphicsFormat = format;
+            texture.volumeDepth = size;
+            texture.enableRandomWrite = true;
+            texture.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
+
+
+            texture.Create();
+        }
+        texture.wrapMode = TextureWrapMode.Repeat;
+        texture.filterMode = FilterMode.Bilinear;
+        texture.name = name;
+    }
+
+    #region Jobs
+    struct RenderJob : IJobParallelFor
+    {
+        public void Execute(int index)
+        {
+            
+        }
+    }
+
+    #endregion
 }

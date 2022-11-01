@@ -351,13 +351,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c7bcc638254a40a4ab76be09cb7fadff, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  scale: 0
-  amplitude: 0
+  scale: 0.52
+  impact: 0.2
   ambientColor: {r: 0.2, g: 0.2, b: 0.2, a: 0}
   grassColor: {r: 0, g: 1, b: 0.11764706, a: 0}
   dirtColor: {r: 0.7058824, g: 0.24313726, b: 0, a: 0}
   sandColor: {r: 1, g: 0.6, b: 0, a: 0}
   waterColor: {r: 0, g: 0.47058824, b: 1, a: 0}
+  brushStrength: 0.1
+  brushSize: 25
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!850595691 &2080204478
 LightingSettings:
