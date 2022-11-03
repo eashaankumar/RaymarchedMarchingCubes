@@ -27,6 +27,9 @@ public class MarchingCubesRayMarch : MonoBehaviour
 
     public ComputeShader voxelShader;
 
+    ComputeBuffer mapPosCenterBuffer;
+    Vector3Int[] mapPosCenter;
+
     RenderTexture target, density;
     Camera cam;
     Light directionalLight;
@@ -36,12 +39,17 @@ public class MarchingCubesRayMarch : MonoBehaviour
     void Start()
     {
         kernelIndex = voxelShader.FindKernel("CSMain");
+
+        mapPosCenterBuffer = new ComputeBuffer(1, sizeof(int) * 3);
+        mapPosCenter = new Vector3Int[1];
     }
 
     void Init()
     {
         cam = Camera.current;
         directionalLight = FindObjectOfType<Light>();
+
+
     }
 
     void OnRenderImage(RenderTexture source, RenderTexture destination)
@@ -53,10 +61,15 @@ public class MarchingCubesRayMarch : MonoBehaviour
         int threadGroupsX = Mathf.CeilToInt(cam.pixelWidth / 8.0f);
         int threadGroupsY = Mathf.CeilToInt(cam.pixelHeight / 8.0f);
         voxelShader.Dispatch(0, threadGroupsX, threadGroupsY, 1);
-
+        GetData();
         
 
         Graphics.Blit(target, destination, new Vector2(-1, -1), new Vector2(1, 1));
+    }
+
+    void GetData()
+    {
+        mapPosCenterBuffer.GetData(mapPosCenter);
     }
 
     void SetParameters()
@@ -74,9 +87,15 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetVector("_WaterColor", new Vector3(waterColor.r, waterColor.g, waterColor.b));
         voxelShader.SetFloat("_Scale", scale);
         voxelShader.SetFloat("_Impact", impact);
-        voxelShader.SetBool("_Terraforming", Input.GetMouseButton(0));
+        int terra = 0;
+        if (Input.GetMouseButton(0)) terra = 1;
+        else if (Input.GetMouseButton(1)) terra = -1;
+        voxelShader.SetInt("_Terraforming", terra);
         voxelShader.SetFloat("_BrushStrength", brushStrength);
         voxelShader.SetInt("_BrushSize", brushSize);
+
+        mapPosCenterBuffer.SetData(mapPosCenter);
+        voxelShader.SetBuffer(0, "mapPosCenter", mapPosCenterBuffer);
     }
 
     void InitRenderTexture()
