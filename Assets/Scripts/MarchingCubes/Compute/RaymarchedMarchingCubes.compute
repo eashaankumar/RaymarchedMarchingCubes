@@ -28,7 +28,8 @@ int _BrushSize;
 
 
 static const float epsilon = 0.001;
-static const int maxStepCount = 250;
+static const int MAX_RAY_VOX_TRAVERSE_COUNT = 250;
+static const int MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT = 50;
 
 //float planetRadius = 100; // make sure they are synced!
 static const float3 planetCenter;
@@ -421,14 +422,14 @@ float density(int3 p)
     float noise = lerpF(-1.0, 1.0, d / (planetRadius * 2));
     return noise + (ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * 2 - 1) * surfaceNoiseImpact;*/
 
-    float3 worldPos = float3(p.x, p.y, p.z);
+    float3 worldPos = p;
     float d = distance(worldPos, planetCenter);
-    float noise = lerpF(-1.0, 1.0, d / (planetRadius * 2));
+    float noise = lerp(-1, 1, saturate(d / (planetRadius * 2)));
     float3 pp = worldPos + noisePosition;
     float den = Density[p + int3(1,1,1) * 1000/2];
     //return noise + ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * surfaceNoiseImpact;
     //return noise + ridgedNoise(normalize(pp * _Scale)) * _Impact;
-    return noise + den;
+    return worldPos;
 }
 
 
@@ -483,8 +484,8 @@ float3 calculateNormal(int3 coord)
     float dx = density(coord + normalOffset.xyy) - density(coord - normalOffset.xyy);
     float dy = density(coord + normalOffset.yxy) - density(coord - normalOffset.yxy);
     float dz = density(coord + normalOffset.yyx) - density(coord - normalOffset.yyx);
-    //return normalize(float3(dx, dy, dz));
-    return normalize(coord);
+    return normalize(float3(dx, dy, dz));
+    //return normalize(coord);
 }
 
 Vertex VertexFromInterpolatedNoise(int edgeId, int3 cubePos)
@@ -699,10 +700,13 @@ CheckRayHitsTriangle hitsSurface(int3 mapPos, float3 start, float3 dir, float3 e
         SDFTriRes res = sdfTris(triangles, p, mapPos);
         if (res.sdf < epsilon)
         {
-            hits.hits = true;
-            hits.tri = triangles.triangles[res.triI];
-            hits.d = d + res.sdf;
-            return hits;
+            {
+                // backface culling
+                hits.hits = true;
+                hits.tri = triangles.triangles[res.triI];
+                hits.d = d + res.sdf;
+                return hits;
+            }
         }
         d += res.sdf;
     }
@@ -785,51 +789,7 @@ struct RaymarchDDAResult
     float voxelD; // how far the ray travels inside solid voxel before hitting a triangle
 };
 
-float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
-{
-    float3 color;
-    if (res.miss)
-    {
-        color = float3(0, 0, 0);
-    }
-    else {
-        /*if (mask.x) {
-            color = float3(0.5, 0.5, 0.5);
-        }
-        if (mask.y) {
-            color = float3(1,1,1);
-        }
-        if (mask.z) {
-            color = float3(0.75, 0.75, 0.75);
-        }*/
-        float3 normal = calculateNormal(res.mapPos);
-        float3 planetNorm = normal;
-        float diff = dot(planetNorm, _LightDirection);
-        float diffIntensity = 1;
-        float3 voxelColor = getColorAtVoxel(camRay.origin + camRay.direction * (res.pathLength + res.voxelD));
-        float3 diffuseColor = float3(1, 1, 1) * diffIntensity;
-        float3 diffuse = saturate(diff * diffuseColor);
-
-        float fogAmt = pow(exp(-1 / res.pathLength), 10);
-        float3 fog = fogAmt * float3(1, 1, 1);
-
-        color = (diffuse + _AmbientColor + fog) * voxelColor;
-        //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
-        if (isVoxelInBrushRadius(res.mapPos))
-        {
-            float dis = distance(res.mapPos, mapPosCenter[0]);
-            color = color + float3(1, 0, 0) * (1-dis / _BrushSize);
-        }
-        //color = float3(1, 1, 1);
-        //color = float3(1, 1, 1);
-        // depth blur
-        //color *= (1 - d / maxStepCount * 1.75);
-    }
-
-    return color;
-}
-
-RaymarchDDAResult raymarchDDA(float3 o, float3 dir)
+RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
 {
     // https://www.shadertoy.com/view/4dX3zl
     float3 p = o;
@@ -895,6 +855,67 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir)
     return result;
 }
 
+bool isShadow(Ray camRay, float3 normal, float3 hitPoint)
+{
+    //float3 shadowRayDir = normalize(reflect(-camRay.direction, normal));
+    float3 shadowRayDir = -_LightDirection;
+    RaymarchDDAResult shadowResult = raymarchDDA(hitPoint + shadowRayDir * (epsilon * 5), shadowRayDir, MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT);
+    return !shadowResult.miss;
+}
+
+float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
+{
+    float3 color;
+    if (res.miss)
+    {
+        color = float3(0, 0, 0);
+    }
+    else {
+        /*if (mask.x) {
+            color = float3(0.5, 0.5, 0.5);
+        }
+        if (mask.y) {
+            color = float3(1,1,1);
+        }
+        if (mask.z) {
+            color = float3(0.75, 0.75, 0.75);
+        }*/
+        //float3 normal = calculateNormal(res.mapPos);
+        float3 normal = res.t.vertexB.normal;
+        float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
+        float3 planetNorm = normal;
+        float diff = dot(planetNorm, _LightDirection);
+        float diffIntensity = 1;
+        float3 voxelColor = getColorAtVoxel(hitPoint);
+        float3 diffuseColor = float3(1, 1, 1) * diffIntensity;
+        float3 diffuse = saturate(diff * diffuseColor);
+
+        float fogAmt = pow(exp(-1 / res.pathLength), 10);
+        float3 fog = fogAmt * float3(1, 1, 1);
+
+        // shadow
+        float3 shadowColor = float3(1, 1, 1);
+        bool shadow = isShadow(camRay, normal, hitPoint);
+        if (shadow) shadowColor *= 0.5;
+
+        color = (diffuse + _AmbientColor + fog) * voxelColor * shadowColor;
+        //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
+        if (isVoxelInBrushRadius(res.mapPos))
+        {
+            float dis = distance(res.mapPos, mapPosCenter[0]);
+            color = color + float3(1, 0, 0) * (1 - dis / _BrushSize);
+        }
+
+        color = normal * 0.5 + 0.5;
+        //color = float3(1, 1, 1);
+        //color = float3(1, 1, 1);
+        // depth blur
+        //color *= (1 - d / maxStepCount * 1.75);
+    }
+
+    return color;
+}
+
 float3 raymarchTri(Ray ray)
 {
     float d = 0;
@@ -932,7 +953,7 @@ void CSMain(uint2 id : SV_DispatchThreadID)
 
     float4 result = float4(ray.direction * 0.5 + 0.5, 0);
 
-    RaymarchDDAResult res = raymarchDDA(ray.origin, ray.direction);
+    RaymarchDDAResult res = raymarchDDA(ray.origin, ray.direction, MAX_RAY_VOX_TRAVERSE_COUNT);
 
     if (id.x == width / 2 && id.y == height / 2)
     {
