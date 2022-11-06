@@ -611,22 +611,17 @@ bool getVoxel(int3 c)
    // return voxels[i] != 0;
 }
 
-float3 getColorAtVoxel(int3 mapPos)
+const float sandHeight = 5;
+
+float3 getColorAtVoxel(float3 p)
 {
-    float3 p = float3(mapPos)+float3(1, 1, 1) * 0.5;
-    float planetHeight = distance(p, planetCenter) - 100;
+    //float3 p = float3(mapPos)+float3(1, 1, 1) * 0.5;
+    float planetHeight = distance(p, planetCenter) - planetRadius - epsilon;
     if (planetHeight < 0) return _WaterColor;
-    if (planetHeight < 3) return _SandColor;
+    if (planetHeight < sandHeight) return _SandColor;
     if (planetHeight < 10) return _DirtColor;
     if (planetHeight < 15) return _GrassColor;
     return float3(1, 1, 1);
-
-    /*const float3 off = float3(12, 1, -33);
-    float3 pp = p + noisePosition;
-    float noise = ridgedNoise2(normalize(pp * 0.1), 1, 2.0, 2.0) * 0.5;
-    if (noise < 0.15) return _SandColor;
-    if (noise < 0.25) return _DirtColor;
-    return _GrassColor;*/
 }
 
 static const float MAX_FLOAT = 3.402823466e+38F;
@@ -681,6 +676,7 @@ struct CheckRayHitsTriangle
 {
     bool hits;
     Triangle tri;
+    float d;
 };
 
 // steps through solid voxel and detects hit with triangle
@@ -705,6 +701,7 @@ CheckRayHitsTriangle hitsSurface(int3 mapPos, float3 start, float3 dir, float3 e
         {
             hits.hits = true;
             hits.tri = triangles.triangles[res.triI];
+            hits.d = d + res.sdf;
             return hits;
         }
         d += res.sdf;
@@ -783,11 +780,12 @@ struct RaymarchDDAResult
 {
     int3 mapPos;
     bool miss;
-    float pathLength;
+    float pathLength; // distance to solid voxel entry face (of the cube representing the voxel, not the triangles)
     Triangle t;
+    float voxelD; // how far the ray travels inside solid voxel before hitting a triangle
 };
 
-float3 GetColorAtRaymarchResult(RaymarchDDAResult res)
+float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 {
     float3 color;
     if (res.miss)
@@ -808,7 +806,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res)
         float3 planetNorm = normal;
         float diff = dot(planetNorm, _LightDirection);
         float diffIntensity = 1;
-        float3 voxelColor = _WaterColor; /*getColorAtVoxel(res.mapPos);*/
+        float3 voxelColor = getColorAtVoxel(camRay.origin + camRay.direction * (res.pathLength + res.voxelD));
         float3 diffuseColor = float3(1, 1, 1) * diffIntensity;
         float3 diffuse = saturate(diff * diffuseColor);
 
@@ -892,6 +890,7 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir)
     result.pathLength = pathLength;
     //result.normal = normalize(hits.tri.vertexA.normal + hits.tri.vertexB.normal + hits.tri.vertexC.normal);
     result.t = hits.tri;
+    result.voxelD = hits.d;
 
     return result;
 }
@@ -940,7 +939,7 @@ void CSMain(uint2 id : SV_DispatchThreadID)
         mapPosCenter[0] = res.mapPos;
     }
 
-    result.xyz = GetColorAtRaymarchResult(res);
+    result.xyz = GetColorAtRaymarchResult(res, ray);
 
     //result.xyz = raymarchTri(ray);
 
