@@ -19,7 +19,9 @@ public class MarchingCubesRayMarch : MonoBehaviour
     [SerializeField]
     Color sandColor;
     [SerializeField]
-    Color waterColor;
+    Color waterColorShallow;
+    [SerializeField]
+    Color waterColorDeep;
     [SerializeField]
     float brushStrength;
     [SerializeField]
@@ -84,7 +86,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetVector("_GrassColor", new Vector3(grassColor.r, grassColor.g, grassColor.b));
         voxelShader.SetVector("_SandColor", new Vector3(sandColor.r, sandColor.g, sandColor.b));
         voxelShader.SetVector("_DirtColor", new Vector3(dirtColor.r, dirtColor.g, dirtColor.b));
-        voxelShader.SetVector("_WaterColor", new Vector3(waterColor.r, waterColor.g, waterColor.b));
+        voxelShader.SetVector("_WaterColorShallow", new Vector3(waterColorShallow.r, waterColorShallow.g, waterColorShallow.b));
+        voxelShader.SetVector("_WaterColorDeep", new Vector3(waterColorDeep.r, waterColorDeep.g, waterColorDeep.b));
         voxelShader.SetFloat("_Scale", scale);
         voxelShader.SetFloat("_Impact", impact);
         int terra = 0;

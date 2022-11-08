@@ -17,7 +17,8 @@ float3 _LightDirection; // must be normalized!
 float3 _AmbientColor;
 float3 _GrassColor;
 float3 _SandColor;
-float3 _WaterColor;
+float3 _WaterColorShallow;
+float3 _WaterColorDeep;
 float3 _DirtColor;
 float _Scale;
 float _Impact;
@@ -33,7 +34,7 @@ static const int MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT = 50;
 
 //float planetRadius = 100; // make sure they are synced!
 static const float3 planetCenter = float3(0,0,0);
-static const float planetRadius = 500;
+static const float planetRadius = 250;
 
 static const int numThreads = 8;
 
@@ -618,7 +619,6 @@ float3 getColorAtVoxel(float3 p)
 {
     //float3 p = float3(mapPos)+float3(1, 1, 1) * 0.5;
     float planetHeight = distance(p, planetCenter) - planetRadius - epsilon;
-    if (planetHeight < 0) return _WaterColor;
     if (planetHeight < sandHeight) return _SandColor;
     if (planetHeight < 10) return _DirtColor;
     if (planetHeight < 15) return _GrassColor;
@@ -859,8 +859,34 @@ bool isShadow(Ray camRay, float3 normal, float3 hitPoint)
 {
     //float3 shadowRayDir = normalize(reflect(-camRay.direction, normal));
     float3 shadowRayDir = -_LightDirection;
-    RaymarchDDAResult shadowResult = raymarchDDA(hitPoint + shadowRayDir * (1), shadowRayDir, MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT);
+    RaymarchDDAResult shadowResult = raymarchDDA(hitPoint + shadowRayDir * (0), shadowRayDir, MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT);
     return !shadowResult.miss;
+}
+
+static const float maxFloat = 3.402823466e+38;
+
+// https://github.com/SebLague/Solar-System/blob/Development/Assets/Scripts/Celestial/Shaders/Includes/Math.cginc
+float2 raySphere(float3 sphereCentre, float sphereRadius, float3 rayOrigin, float3 rayDir) {
+    float3 offset = rayOrigin - sphereCentre;
+    float a = 1; // Set to dot(rayDir, rayDir) if rayDir might not be normalized
+    float b = 2 * dot(offset, rayDir);
+    float c = dot(offset, offset) - sphereRadius * sphereRadius;
+    float d = b * b - 4 * a * c; // Discriminant from quadratic formula
+
+    // Number of intersections: 0 when d < 0; 1 when d = 0; 2 when d > 0
+    if (d > 0) {
+        float s = sqrt(d);
+        float dstToSphereNear = max(0, (-b - s) / (2 * a));
+        float dstToSphereFar = (-b + s) / (2 * a);
+
+        // Ignore intersections that occur behind the ray
+        if (dstToSphereFar >= 0) {
+            return float2(dstToSphereNear, dstToSphereFar - dstToSphereNear);
+        }
+    }
+    // Ray did not intersect sphere
+
+    return float2(maxFloat, 0);
 }
 
 float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
@@ -873,6 +899,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     else {
         float3 normal = calculateNormal(res.mapPos);
         float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
+        float disToSurface = res.pathLength + res.voxelD;
         float3 planetNorm = normal;
         float diff = dot(planetNorm, _LightDirection);
         float diffIntensity = 1;
@@ -885,16 +912,32 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 
         // shadow
         float3 shadowColor = float3(1, 1, 1);
-        bool shadow = isShadow(camRay, normal, hitPoint);
-        if (shadow) shadowColor *= 0.5;
-
+        /*bool shadow = isShadow(camRay, normal, hitPoint);
+        if (shadow) shadowColor *= 0.5;*/
 
         color = (diffuse + _AmbientColor + fog) * voxelColor * shadowColor;
+
+        // ocean
+        float2 oceanRaySphere = raySphere(planetCenter, planetRadius - 5, camRay.origin, camRay.direction);
+        float3 oceanColor = float3(0,0,0);
+        if (oceanRaySphere.y != 0)
+        {
+            float disToWaterSurface = oceanRaySphere.x;
+            if (disToWaterSurface < disToSurface)
+            {
+                float disThroughOcean = 1 - disToWaterSurface / disToSurface;
+                oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disThroughOcean);
+                oceanColor = saturate(oceanColor);
+                color = oceanColor;
+            }
+        }
+
+
         //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
         if (isVoxelInBrushRadius(res.mapPos))
         {
-            float dis = distance(res.mapPos, mapPosCenter[0]);
-            color = color + float3(1, 0, 0) * (1 - dis / _BrushSize);
+            float brushdis = distance(res.mapPos, mapPosCenter[0]);
+            color = color + float3(1, 0, 0) * (1 - brushdis / _BrushSize);
         }
 
         //color = float3(1, 1, 1);
