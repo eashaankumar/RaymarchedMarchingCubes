@@ -825,7 +825,7 @@ RaymarchResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
 [numthreads(numThreads, numThreads, 1)]
 void CSMain(uint2 id : SV_DispatchThreadID)
 {
-    if (!(id.x % 5 == 0 && id.y % 5 == 0)) return;
+    if (!(id.x % 10 == 0 && id.y % 10 == 0)) return;
     float2 uv = id.xy / float2(width, height);
 
     // Raymarching:

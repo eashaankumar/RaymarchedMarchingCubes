@@ -1,10 +1,13 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Burst;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Assertions;
 using UnityEngine.Rendering;
 
 public class VoxelsToTris : MonoBehaviour
@@ -98,14 +101,12 @@ public class VoxelsToTris : MonoBehaviour
     RenderTexture density;
     Camera cam;
     Light directionalLight;
-    NativeArray<Triangle> tris;
-    NativeList<float3> vertices;
-    NativeList<int> indices;
-    NativeList<float3> normals;
 
     int kernelIndex;
 
     bool canRender;
+
+    int width, height;
 
     #region MonoBehavior
     void Start()
@@ -116,11 +117,9 @@ public class VoxelsToTris : MonoBehaviour
         mapPosCenter = new Vector3Int[1];
 
         cam = Camera.main;
+        width = cam.pixelWidth;
+        height = cam.pixelHeight / 2;
         directionalLight = FindObjectOfType<Light>();
-        vertices = new NativeList<float3>(cam.pixelWidth * cam.pixelHeight * MAX_TRIS_PER_VOXEL * 3, Allocator.Persistent);
-        normals = new NativeList<float3>(cam.pixelWidth * cam.pixelHeight * MAX_TRIS_PER_VOXEL * 3, Allocator.Persistent);
-        indices = new NativeList<int>(Allocator.Persistent);
-
         canRender = true;
     }
 
@@ -131,7 +130,6 @@ public class VoxelsToTris : MonoBehaviour
 
     private void OnDestroy()
     {
-        tris.Dispose();
         mapPosCenterBuffer.Dispose();
         trianglesBuffer.Dispose();
     }
@@ -145,12 +143,26 @@ public class VoxelsToTris : MonoBehaviour
         InitRenderTexture();
         SetParameters();
 
-        int threadGroupsX = Mathf.CeilToInt(cam.pixelWidth / 8.0f);
-        int threadGroupsY = Mathf.CeilToInt(cam.pixelHeight / 8.0f);
+        int threadGroupsX = Mathf.CeilToInt(width / 8.0f);
+        int threadGroupsY = Mathf.CeilToInt(height / 8.0f);
         canRender = false;
         voxelShader.Dispatch(0, threadGroupsX, threadGroupsY, 1);
         StartCoroutine(GetData());
 
+    }
+
+    // https://answers.unity.com/questions/1819160/cast-vector3-to-float3.html
+    public unsafe static void MemCpy<SRC, DST>(NativeArray<SRC> src, DST[] dst)
+    where SRC : struct
+    where DST : struct
+    {
+        int srcSize = src.Length * UnsafeUtility.SizeOf<SRC>();
+        int dstSize = dst.Length * UnsafeUtility.SizeOf<DST>();
+        Assert.AreEqual(srcSize, dstSize, $"{nameof(srcSize)}:{srcSize} and {nameof(dstSize)}:{dstSize} must be equal.");
+        void* srcPtr = NativeArrayUnsafeUtility.GetUnsafeReadOnlyPtr(src);
+        void* dstPtr = UnsafeUtility.PinGCArrayAndGetDataAddress(dst, out ulong handle);
+        UnsafeUtility.MemCpy(destination: dstPtr, source: srcPtr, size: srcSize);
+        UnsafeUtility.ReleaseGCObject(handle);
     }
 
     IEnumerator GetData()
@@ -168,37 +180,69 @@ public class VoxelsToTris : MonoBehaviour
         trianglesBuffer.Dispose();
 
         yield return null;
-        if (tris != null && tris.IsCreated) tris.Dispose();
-        tris = new NativeArray<Triangle>(ts, Allocator.TempJob);
+        #region Job System fails
+        /*NativeArray<Triangle> tris = new NativeArray<Triangle>(ts, Allocator.TempJob);
+        NativeArray<int> indlen = new NativeArray<int>(1, Allocator.TempJob);
+        NativeList<float3> vertices = new NativeList<float3>(numTris * 3, Allocator.TempJob);
+        NativeList<float3> normals = new NativeList<float3>(numTris * 3, Allocator.TempJob);
+        NativeList<int> indices = new NativeList<int>(numTris * 3, Allocator.TempJob);
         MeshConverterJob job = new MeshConverterJob()
         {
             tris = tris,
             vertices = vertices,
             normals = normals,
             indices = indices,
+            indicesLength = indlen,
         };
         JobHandle handle = job.Schedule(numTris, 64);
         handle.Complete();
-        yield return null;
         tris.Dispose();
+        indlen.Dispose();
 
-        
+        VoxToTrisMeshBuilder.Instance.mesh.Clear();
 
+        VoxToTrisMeshBuilder.Instance.mesh.vertices = new Vector3[vertices.Length];
+        MemCpy<float3, Vector3>(vertices, VoxToTrisMeshBuilder.Instance.mesh.vertices);
+        //VoxToTrisMeshBuilder.Instance.mesh.SetVertices(vertices.ToArray());
+        //VoxToTrisMeshBuilder.Instance.mesh.SetNormals(normals.ToArray());
+        VoxToTrisMeshBuilder.Instance.mesh.SetTriangles(indices.ToArray(), 0);
+
+        vertices.Dispose();
+        normals.Dispose();
+        indices.Dispose();*/
+        #endregion
+        #region Async readback fails
         //tris = new NativeArray<Triangle>(numTris, Allocator.Persistent);
 
         //AsyncGPUReadback.RequestIntoNativeArray(ref tris, trianglesBuffer, OnCompleteReadback);
+        #endregion
 
-        yield break;
 
-        /*for (int i = 0; i < numTris; i++)
+        List<Vector3> vertices = new List<Vector3>();
+        List<Vector3> normals = new List<Vector3>();
+        List<int> indices = new List<int>();
+
+        for (int i = 0; i < numTris; i++)
         {
 
-            Triangle t = tris[i];
-            //AddTriangle(t);
-        }*/
+            Triangle t = ts[i];
+            for(int j = 2; j >= 0; j--)
+            {
+                vertices.Add(t[j].position);
+                normals.Add(t[j].normal);
+                indices.Add(indices.Count);
+            }
+        }
+
+        VoxToTrisMeshBuilder.Instance.mesh.Clear();
+        VoxToTrisMeshBuilder.Instance.mesh.SetVertices(vertices.ToArray());
+        VoxToTrisMeshBuilder.Instance.mesh.SetNormals(normals.ToArray());
+        VoxToTrisMeshBuilder.Instance.mesh.SetTriangles(indices.ToArray(), 0);
+        canRender = true;
+        yield break;
     }
 
-    /*void OnCompleteReadback(AsyncGPUReadbackRequest request)
+    void OnCompleteReadback(AsyncGPUReadbackRequest request)
     {
         if (request.hasError)
         {
@@ -207,13 +251,17 @@ public class VoxelsToTris : MonoBehaviour
             return;
         }
         print("Generating Triangles " + Time.time);
-    }*/
+        //tris.Dispose();
+        //trianglesBuffer.Dispose();
+
+        canRender = true;
+    }
 
     void SetParameters()
     {
         brushStrength = Mathf.Abs(brushStrength);
-        voxelShader.SetInt("width", cam.pixelWidth);
-        voxelShader.SetInt("height", cam.pixelWidth);
+        voxelShader.SetInt("width", width);
+        voxelShader.SetInt("height", height);
         voxelShader.SetTexture(kernelIndex, "Density", density);
         voxelShader.SetMatrix("_CameraToWorld", cam.cameraToWorldMatrix);
         voxelShader.SetMatrix("_CameraInverseProjection", cam.projectionMatrix.inverse);
@@ -236,20 +284,20 @@ public class VoxelsToTris : MonoBehaviour
         mapPosCenterBuffer.SetData(mapPosCenter);
         voxelShader.SetBuffer(0, "mapPosCenter", mapPosCenterBuffer);
 
-        trianglesBuffer = new ComputeBuffer(cam.pixelWidth * cam.pixelHeight * 6, TRIANGLE_STRUCT_SIZE, ComputeBufferType.Append);
+        trianglesBuffer = new ComputeBuffer(width * height * 6, TRIANGLE_STRUCT_SIZE, ComputeBufferType.Append);
         trianglesBuffer.SetCounterValue(0);
         voxelShader.SetBuffer(kernelIndex, "Triangles", trianglesBuffer);
     }
 
     void InitRenderTexture()
     {
-        /*if (target == null || target.width != cam.pixelWidth || target.height != cam.pixelHeight)
+        /*if (target == null || target.width != width || target.height != height)
         {
             if (target != null)
             {
                 target.Release();
             }
-            target = new RenderTexture(cam.pixelWidth, cam.pixelHeight, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
+            target = new RenderTexture(width, height, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
             target.enableRandomWrite = true;
             target.Create();
         }*/
@@ -284,6 +332,7 @@ public class VoxelsToTris : MonoBehaviour
     #endregion
 
     #region Jobs
+    [BurstCompile]
     struct MeshConverterJob : IJobParallelFor
     {
         [ReadOnly]
@@ -291,25 +340,31 @@ public class VoxelsToTris : MonoBehaviour
         [NativeDisableParallelForRestriction]
         public NativeList<float3> vertices;
         [NativeDisableParallelForRestriction]
+        public NativeList<float3> normals;
+        [NativeDisableParallelForRestriction]
         public NativeList<int> indices;
         [NativeDisableParallelForRestriction]
-        public NativeList<float3> normals;
+        public NativeArray<int> indicesLength;
         public void Execute(int index)
         {
-            /*Triangle triangle = tris[index];
+            Triangle triangle = tris[index];
             
-            vertices.Add(triangle[0].position);
-            normals.Add(triangle[0].normal);
-            indices.Add(indices.Length);
+            vertices.AddNoResize(triangle[0].position);
+            normals.AddNoResize(triangle[0].normal);
+           
 
-            vertices.Add(triangle[1].position);
-            normals.Add(triangle[1].normal);
-            indices.Add(indices.Length);
+            vertices.AddNoResize(triangle[1].position);
+            normals.AddNoResize(triangle[1].normal);
 
-            vertices.Add(triangle[2].position);
-            normals.Add(triangle[2].normal);
-            indices.Add(indices.Length);
-            */
+            vertices.AddNoResize(triangle[2].position);
+            normals.AddNoResize(triangle[2].normal);
+
+            for(int j = 0; j < 2; j++)
+            {
+                indices.Add(indicesLength[0]);
+                indicesLength[0]++;
+
+            }
         }
     }
 
