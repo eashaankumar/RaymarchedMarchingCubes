@@ -33,7 +33,7 @@ static const int MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT = 50;
 
 //float planetRadius = 100; // make sure they are synced!
 static const float3 planetCenter = float3(0,0,0);
-static const float planetRadius = 100;
+static const float planetRadius = 500;
 
 static const int numThreads = 8;
 
@@ -865,14 +865,13 @@ bool isShadow(Ray camRay, float3 normal, float3 hitPoint)
 
 float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 {
-    float3 color;
+    float3 color = float3(0, 0, 0);
     if (res.miss)
     {
         color = float3(0, 0, 0);
     }
     else {
-        //float3 normal = calculateNormal(res.mapPos);
-        float3 normal = normalize(res.t.vertexB.normal);
+        float3 normal = calculateNormal(res.mapPos);
         float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
         float3 planetNorm = normal;
         float diff = dot(planetNorm, _LightDirection);
@@ -886,8 +885,8 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 
         // shadow
         float3 shadowColor = float3(1, 1, 1);
-        //bool shadow = isShadow(camRay, normal, hitPoint);
-        //if (shadow) shadowColor *= 0.5;
+        bool shadow = isShadow(camRay, normal, hitPoint);
+        if (shadow) shadowColor *= 0.5;
 
 
         color = (diffuse + _AmbientColor + fog) * voxelColor * shadowColor;
@@ -902,7 +901,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         //color = float3(1, 1, 1);
         // depth blur
         //color *= (1 - d / maxStepCount * 1.75);
-        color = normal * 0.5 + 0.5;
+        //color = normal * 0.5 + 0.5;
     }
 
     return color;

@@ -64,7 +64,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
         GetData();
         
 
-        Graphics.Blit(target, destination, new Vector2(-1, -1), new Vector2(1, 1));
+        Graphics.Blit(target, destination);
     }
 
     void GetData()
