@@ -27,6 +27,24 @@ public class MarchingCubesRayMarch : MonoBehaviour
     [SerializeField]
     int brushSize;
 
+    [Header("Ocean Settings")]
+    [SerializeField]
+    float oceanRadius;
+    [SerializeField, Tooltip("Depth at which waves form on the shores")]
+    float waveBreakDepth;
+
+    [Header("Atmosphere Settings")]
+    [SerializeField]
+    float atmosphereRadius;
+    [SerializeField]
+    float atmosphereDensityFallOff;
+    [SerializeField]
+    int opticalDepthSteps;
+    [SerializeField]
+    int atmosphereSteps;
+    [SerializeField]
+    Vector3 scatterCoefficients;
+
     public ComputeShader voxelShader;
 
     ComputeBuffer mapPosCenterBuffer;
@@ -90,6 +108,17 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetVector("_WaterColorDeep", new Vector3(waterColorDeep.r, waterColorDeep.g, waterColorDeep.b));
         voxelShader.SetFloat("_Scale", scale);
         voxelShader.SetFloat("_Impact", impact);
+        voxelShader.SetFloat("_Time", Time.time);
+        voxelShader.SetFloat("_WaveBreakDepth", waveBreakDepth);
+
+        #region Atmosphere shader variables
+        voxelShader.SetFloat("_AtmosphereRadius", atmosphereRadius);
+        voxelShader.SetFloat("_OceanRadius", oceanRadius);
+        voxelShader.SetFloat("_AtmosphereDensityFalloff", atmosphereDensityFallOff);
+        voxelShader.SetInt("_OpticalDepthSteps", opticalDepthSteps);
+        voxelShader.SetInt("_AtmosphereSteps", atmosphereSteps);
+        voxelShader.SetVector("_ScatterCoefficients", scatterCoefficients);
+        #endregion
         int terra = 0;
         if (Input.GetMouseButton(0)) terra = 1;
         else if (Input.GetMouseButton(1)) terra = -1;

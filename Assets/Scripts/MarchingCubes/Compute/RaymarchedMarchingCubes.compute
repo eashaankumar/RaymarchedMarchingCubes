@@ -26,6 +26,16 @@ float3 noisePosition = float3(0,0,0);
 int _Terraforming;
 float _BrushStrength;
 int _BrushSize;
+float _WaveBreakDepth;
+float _Time;
+
+// atmosphere
+float _AtmosphereRadius;
+float _OceanRadius;
+float _AtmosphereDensityFalloff;
+int _OpticalDepthSteps;
+int _AtmosphereSteps;
+float3 _ScatterCoefficients = float3(700, 500, 500);
 
 
 static const float epsilon = 0.001;
@@ -400,6 +410,12 @@ float lerpF(float a, float b, float w) {
 float ridgedNoise(float3 p)
 {
     float3 noise = abs(snoise(p));
+    return 1.0f - noise;
+}
+
+float ridgedNoiseWave(float3 p)
+{
+    float3 noise = abs(snoise(normalize(p) + _Time/200 * _Scale) * _Impact);
     return 1.0f - noise;
 }
 
@@ -889,23 +905,67 @@ float2 raySphere(float3 sphereCentre, float sphereRadius, float3 rayOrigin, floa
     return float2(maxFloat, 0);
 }
 
+float densityAtPoint(float3 densitySamplePoint)
+{
+    float heightAboveSurface = length(densitySamplePoint - planetCenter) - _OceanRadius;
+    float height01 = heightAboveSurface / (_AtmosphereRadius - _OceanRadius);
+    return exp(-height01 * _AtmosphereDensityFalloff) * (1 - height01);
+}
+
+// final
+float opticalDepth(float3 rayOrigin, float3 rayDir, float rayLength)
+{
+    float3 densitySamplePoint = rayOrigin;
+    float stepsize = rayLength / (_OpticalDepthSteps - 1);
+    float opticalDepth = 0;
+    for (int i = 0; i < _OpticalDepthSteps; i++)
+    {
+        float localDensity = densityAtPoint(densitySamplePoint);
+        opticalDepth += localDensity * stepsize;
+        densitySamplePoint += rayDir * stepsize;
+    }
+    return opticalDepth;
+}
+
+// final
+float3 calculateLight(float3 rayOrigin, float3 rayDir, float3 rayLength, float3 originalCol)
+{
+    float3 inScatterPoint = rayOrigin;
+    float stepSize = rayLength / (_AtmosphereSteps - 1);
+    float3 inScatterLight = 0;
+    float viewRayOpticalDepth = 0;
+
+    for (int i = 0; i < _AtmosphereSteps; i++)
+    {
+        float sunRayLength = raySphere(planetCenter, _AtmosphereRadius, inScatterPoint, -_LightDirection).y;
+        float sunRayOpticalDepth = opticalDepth(inScatterPoint, -_LightDirection, sunRayLength);
+        viewRayOpticalDepth = opticalDepth(inScatterPoint, -rayDir, stepSize * i);
+        float3 transmittance = exp(-(sunRayOpticalDepth + viewRayOpticalDepth) * _ScatterCoefficients);
+        float localDensity = densityAtPoint(inScatterPoint);
+        inScatterLight += localDensity * transmittance * _ScatterCoefficients * stepSize;
+        inScatterPoint += rayDir * stepSize;
+    }
+    float originalColTransmittance = exp(-viewRayOpticalDepth);
+    return (originalCol * originalColTransmittance) + inScatterLight + originalCol;
+}
+
 float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 {
     float3 color = float3(0, 0, 0);
-    if (res.miss)
-    {
-        color = float3(0, 0, 0);
-    }
-    else {
+    float3 surfaceColor = float3(0, 0, 0);
+    float3 voxelColor = float3(0, 0, 0);
+    float3 diffuseColor = float3(0, 0, 0);
+    float disToSurface = 0;
+    float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
+    if (!res.miss) {
         float3 normal = calculateNormal(res.mapPos);
-        float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
-        float disToSurface = res.pathLength + res.voxelD;
+        disToSurface = res.pathLength + res.voxelD;
         float3 planetNorm = normal;
         float diff = dot(planetNorm, _LightDirection);
         float diffIntensity = 1;
-        float3 voxelColor = getColorAtVoxel(hitPoint);
-        float3 diffuseColor = float3(1, 1, 1) * diffIntensity;
-        float3 diffuse = saturate(diff * diffuseColor);
+        voxelColor = getColorAtVoxel(hitPoint);
+        float3 diffuse = float3(1, 1, 1) * diffIntensity;
+        diffuseColor = saturate(diff * diffuse);
 
         float fogAmt = pow(exp(-1 / res.pathLength), 10);
         float3 fog = fogAmt * float3(1, 1, 1);
@@ -915,23 +975,8 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         /*bool shadow = isShadow(camRay, normal, hitPoint);
         if (shadow) shadowColor *= 0.5;*/
 
-        color = (diffuse + _AmbientColor + fog) * voxelColor * shadowColor;
-
-        // ocean
-        float2 oceanRaySphere = raySphere(planetCenter, planetRadius - 5, camRay.origin, camRay.direction);
-        float3 oceanColor = float3(0,0,0);
-        if (oceanRaySphere.y != 0)
-        {
-            float disToWaterSurface = oceanRaySphere.x;
-            if (disToWaterSurface < disToSurface)
-            {
-                float disThroughOcean = 1 - disToWaterSurface / disToSurface;
-                oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disThroughOcean);
-                oceanColor = saturate(oceanColor);
-                color = oceanColor;
-            }
-        }
-
+        surfaceColor = (diffuseColor + _AmbientColor + fog) * voxelColor * shadowColor;
+        
 
         //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
         if (isVoxelInBrushRadius(res.mapPos))
@@ -945,6 +990,54 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         // depth blur
         //color *= (1 - d / maxStepCount * 1.75);
         //color = normal * 0.5 + 0.5;
+    }
+
+    color = surfaceColor;
+
+    // ocean
+    //float waveNoise = ridgedNoiseWave(hitPoint);
+    float2 oceanRaySphere = raySphere(planetCenter, _OceanRadius, camRay.origin, camRay.direction);
+    float3 oceanColor = float3(0, 0, 0);
+    float disToWaterSurface = oceanRaySphere.x;
+    float disThroughOcean = 0;
+    if (oceanRaySphere.y > 0)
+    {
+        // Ocean not in path of ray
+
+        if (res.miss)
+        {
+            disThroughOcean = oceanRaySphere.y / (_OceanRadius * 2);
+            oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disThroughOcean);
+            oceanColor = saturate(oceanColor);
+            color = oceanColor;
+        }
+        else if (disToWaterSurface < disToSurface)
+        {
+            // Ocean visible
+            disThroughOcean = disToSurface - disToWaterSurface;
+            float disT = 1 - disToWaterSurface / disToSurface;
+            oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disT);
+            // wavebreak
+            if (disThroughOcean <= _WaveBreakDepth)
+            {
+                oceanColor = float3(1, 1, 1);
+            }
+            //oceanColor *= waveNoise;
+            oceanColor = saturate(oceanColor);
+            surfaceColor = (diffuseColor + _AmbientColor) * voxelColor;
+            color = oceanColor + surfaceColor * 0.1;
+        }
+    }
+    
+    // atmoshpere
+    float2 atmosphereSphere = raySphere(planetCenter, _AtmosphereRadius, camRay.origin, camRay.direction);
+    float dstToAtmosphere = atmosphereSphere.x;
+    float dstThroughAtmosphere = min(atmosphereSphere.y, disToSurface - dstToAtmosphere);
+    if (dstThroughAtmosphere > 0)
+    {
+        const float atmos_epsilon = 0.0001;
+        float3 pointInAtmosphere = camRay.origin + camRay.direction * (dstToAtmosphere + atmos_epsilon);
+        color = calculateLight(pointInAtmosphere, camRay.direction, dstThroughAtmosphere - atmos_epsilon, color);
     }
 
     return color;

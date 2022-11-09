@@ -462,6 +462,13 @@ MonoBehaviour:
   waterColorDeep: {r: 0, g: 0.15508296, b: 0.5471698, a: 0}
   brushStrength: 0.001
   brushSize: 5
+  oceanRadius: 245
+  waveBreakDepth: 0.5
+  atmosphereRadius: 300
+  atmosphereDensityFallOff: 0.1
+  opticalDepthSteps: 5
+  atmosphereSteps: 5
+  scatterCoefficients: {x: 700, y: 300, z: 300}
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!1 &703060098
 GameObject:
