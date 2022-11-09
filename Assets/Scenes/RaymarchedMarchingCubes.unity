@@ -464,11 +464,12 @@ MonoBehaviour:
   brushSize: 5
   oceanRadius: 245
   waveBreakDepth: 0.5
-  atmosphereRadius: 300
-  atmosphereDensityFallOff: 0.1
+  atmosphereRadius: 296.3
+  atmosphereDensityFallOff: 3.62
   opticalDepthSteps: 5
   atmosphereSteps: 5
-  scatterCoefficients: {x: 700, y: 300, z: 300}
+  wavelengths: {x: 700, y: 530, z: 440}
+  scatteringStrength: 0.2
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!1 &703060098
 GameObject:

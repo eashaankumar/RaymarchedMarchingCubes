@@ -43,7 +43,9 @@ public class MarchingCubesRayMarch : MonoBehaviour
     [SerializeField]
     int atmosphereSteps;
     [SerializeField]
-    Vector3 scatterCoefficients;
+    Vector3 wavelengths = new Vector3(700, 530, 440);
+    [SerializeField]
+    float scatteringStrength;
 
     public ComputeShader voxelShader;
 
@@ -117,7 +119,11 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetFloat("_AtmosphereDensityFalloff", atmosphereDensityFallOff);
         voxelShader.SetInt("_OpticalDepthSteps", opticalDepthSteps);
         voxelShader.SetInt("_AtmosphereSteps", atmosphereSteps);
-        voxelShader.SetVector("_ScatterCoefficients", scatterCoefficients);
+        float scatterR = Mathf.Pow(400 / wavelengths.x, 4) * scatteringStrength;
+        float scatterG = Mathf.Pow(400 / wavelengths.y, 4) * scatteringStrength;
+        float scatterB = Mathf.Pow(400 / wavelengths.z, 4) * scatteringStrength;
+
+        voxelShader.SetVector("_ScatterCoefficients", new Vector3(scatterR, scatterG, scatterB));
         #endregion
         int terra = 0;
         if (Input.GetMouseButton(0)) terra = 1;

@@ -35,7 +35,7 @@ float _OceanRadius;
 float _AtmosphereDensityFalloff;
 int _OpticalDepthSteps;
 int _AtmosphereSteps;
-float3 _ScatterCoefficients = float3(700, 500, 500);
+float3 _ScatterCoefficients = float3(700, 530, 440);
 
 
 static const float epsilon = 0.001;
@@ -912,7 +912,6 @@ float densityAtPoint(float3 densitySamplePoint)
     return exp(-height01 * _AtmosphereDensityFalloff) * (1 - height01);
 }
 
-// final
 float opticalDepth(float3 rayOrigin, float3 rayDir, float rayLength)
 {
     float3 densitySamplePoint = rayOrigin;
@@ -927,7 +926,6 @@ float opticalDepth(float3 rayOrigin, float3 rayDir, float rayLength)
     return opticalDepth;
 }
 
-// final
 float3 calculateLight(float3 rayOrigin, float3 rayDir, float3 rayLength, float3 originalCol)
 {
     float3 inScatterPoint = rayOrigin;
@@ -946,7 +944,7 @@ float3 calculateLight(float3 rayOrigin, float3 rayDir, float3 rayLength, float3 
         inScatterPoint += rayDir * stepSize;
     }
     float originalColTransmittance = exp(-viewRayOpticalDepth);
-    return (originalCol * originalColTransmittance) + inScatterLight + originalCol;
+    return (originalCol * originalColTransmittance) + inScatterLight * float3(1,1,1) + originalCol;
 }
 
 float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
@@ -1032,12 +1030,13 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     // atmoshpere
     float2 atmosphereSphere = raySphere(planetCenter, _AtmosphereRadius, camRay.origin, camRay.direction);
     float dstToAtmosphere = atmosphereSphere.x;
-    float dstThroughAtmosphere = min(atmosphereSphere.y, disToSurface - dstToAtmosphere);
+    float dstThroughAtmosphere = disToSurface - dstToAtmosphere;
+    if (res.miss) dstThroughAtmosphere = atmosphereSphere.y;
     if (dstThroughAtmosphere > 0)
     {
         const float atmos_epsilon = 0.0001;
         float3 pointInAtmosphere = camRay.origin + camRay.direction * (dstToAtmosphere + atmos_epsilon);
-        color = calculateLight(pointInAtmosphere, camRay.direction, dstThroughAtmosphere - atmos_epsilon, color);
+        color = calculateLight(pointInAtmosphere, camRay.direction, dstThroughAtmosphere - atmos_epsilon * 2, color);
     }
 
     return color;
