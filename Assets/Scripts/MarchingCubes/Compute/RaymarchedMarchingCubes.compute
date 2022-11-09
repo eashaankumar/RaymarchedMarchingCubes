@@ -944,7 +944,7 @@ float3 calculateLight(float3 rayOrigin, float3 rayDir, float3 rayLength, float3 
         inScatterPoint += rayDir * stepSize;
     }
     float originalColTransmittance = exp(-viewRayOpticalDepth);
-    return (originalCol * originalColTransmittance) + inScatterLight * float3(1,1,1) + originalCol;
+    return (originalCol * originalColTransmittance) + inScatterLight * float3(1.1,1.1,1.1) + originalCol;
 }
 
 float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
@@ -958,8 +958,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     if (!res.miss) {
         float3 normal = calculateNormal(res.mapPos);
         disToSurface = res.pathLength + res.voxelD;
-        float3 planetNorm = normal;
-        float diff = dot(planetNorm, _LightDirection);
+        float diff = dot(normal, -_LightDirection);
         float diffIntensity = 1;
         voxelColor = getColorAtVoxel(hitPoint);
         float3 diffuse = float3(1, 1, 1) * diffIntensity;
@@ -973,7 +972,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         /*bool shadow = isShadow(camRay, normal, hitPoint);
         if (shadow) shadowColor *= 0.5;*/
 
-        surfaceColor = (diffuseColor + _AmbientColor + fog) * voxelColor * shadowColor;
+        surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;
         
 
         //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
