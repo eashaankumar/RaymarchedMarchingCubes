@@ -39,7 +39,7 @@ float3 _ScatterCoefficients = float3(700, 530, 440);
 
 
 static const float epsilon = 0.001;
-static const int MAX_RAY_VOX_TRAVERSE_COUNT = 250;
+static const int MAX_RAY_VOX_TRAVERSE_COUNT = 500;
 static const int MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT = 50;
 
 //float planetRadius = 100; // make sure they are synced!
@@ -769,6 +769,7 @@ void terraform(int3 mapPos, int2 id, int width, int height)
                 for (int z = -_BrushSize; z <= _BrushSize; z++)
                 {
                     int3 offset = int3(x, y, z);
+                    if (length(offset + float3(1, 1, 1) / 2) > _BrushSize) continue;
                     float dis = length(offset);
                     Density[mapPos + offset + int3(1, 1, 1) * 1000 / 2] += _BrushStrength * exp(-dis / _BrushSize) * _Terraforming;
                 }
@@ -997,7 +998,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     float3 oceanColor = float3(0, 0, 0);
     float disToWaterSurface = oceanRaySphere.x;
     float disThroughOcean = 0;
-    if (oceanRaySphere.y > 0)
+    if (oceanRaySphere.y > 0 && disToWaterSurface < MAX_RAY_VOX_TRAVERSE_COUNT/2)
     {
         // Ocean not in path of ray
 

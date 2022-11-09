@@ -47,7 +47,13 @@ public class MarchingCubesRayMarch : MonoBehaviour
     [SerializeField]
     float scatteringStrength;
 
+    [Header("Rendering Engine")]
+    [SerializeField, Tooltip("# of ticks between each render call (for updating destination render texture)")]
+    int renderTicks;
+
     public ComputeShader voxelShader;
+
+    int ticks;
 
     ComputeBuffer mapPosCenterBuffer;
     Vector3Int[] mapPosCenter;
@@ -64,17 +70,26 @@ public class MarchingCubesRayMarch : MonoBehaviour
 
         mapPosCenterBuffer = new ComputeBuffer(1, sizeof(int) * 3);
         mapPosCenter = new Vector3Int[1];
+        ticks = 0;
+    }
+
+    private void Update()
+    {
+        ticks++;
+        if (ticks > renderTicks)
+        {
+            ticks = 0;
+            Render();
+        }
     }
 
     void Init()
     {
         cam = Camera.current;
         directionalLight = FindObjectOfType<Light>();
-
-
     }
 
-    void OnRenderImage(RenderTexture source, RenderTexture destination)
+    private void Render()
     {
         Init();
         InitRenderTexture();
@@ -84,8 +99,10 @@ public class MarchingCubesRayMarch : MonoBehaviour
         int threadGroupsY = Mathf.CeilToInt(cam.pixelHeight / 8.0f);
         voxelShader.Dispatch(0, threadGroupsX, threadGroupsY, 1);
         GetData();
-        
+    }
 
+    void OnRenderImage(RenderTexture source, RenderTexture destination)
+    {
         Graphics.Blit(target, destination);
     }
 
@@ -171,10 +188,11 @@ public class MarchingCubesRayMarch : MonoBehaviour
 
 
             texture.Create();
+
+            texture.wrapMode = TextureWrapMode.Repeat;
+            texture.filterMode = FilterMode.Bilinear;
+            texture.name = name;
         }
-        texture.wrapMode = TextureWrapMode.Repeat;
-        texture.filterMode = FilterMode.Bilinear;
-        texture.name = name;
     }
 
     #region Jobs
