@@ -29,6 +29,9 @@ int _BrushSize;
 float _WaveBreakDepth;
 float _Time;
 
+// rendering
+bool _RenderOdds;
+
 // atmosphere
 float _AtmosphereRadius;
 float _OceanRadius;
@@ -716,13 +719,10 @@ CheckRayHitsTriangle hitsSurface(int3 mapPos, float3 start, float3 dir, float3 e
         SDFTriRes res = sdfTris(triangles, p, mapPos);
         if (res.sdf < epsilon)
         {
-            {
-                // backface culling
-                hits.hits = true;
-                hits.tri = triangles.triangles[res.triI];
-                hits.d = d + res.sdf;
-                return hits;
-            }
+            hits.hits = true;
+            hits.tri = triangles.triangles[res.triI];
+            hits.d = d + res.sdf;
+            return hits;
         }
         d += res.sdf;
     }
@@ -957,7 +957,8 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     float disToSurface = 0;
     float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
     if (!res.miss) {
-        float3 normal = calculateNormal(res.mapPos);
+        float3 normal = calculateNormal(res.mapPos) + calculateNormal(res.mapPos + float3(1,0,0)) + calculateNormal(res.mapPos + float3(-1, 0, 0)) + calculateNormal(res.mapPos + float3(0, 1, 0)) + calculateNormal(res.mapPos + float3(0, -1, 0)) + calculateNormal(res.mapPos + float3(0,0, 1) + calculateNormal(res.mapPos + float3(0,0,-1)));
+        normal = normalize(normal);
         disToSurface = res.pathLength + res.voxelD;
         float diff = dot(normal, -_LightDirection);
         float diffIntensity = 1;
@@ -1063,6 +1064,34 @@ float3 raymarchTri(Ray ray)
     return normalize(d/maxDst) * 0.5 + 0.5;
 }
 
+void blur(uint2 id, uint width, uint height)
+{
+    float4 result = float4(0,0,0,0);
+    int blurRadius = 0;
+    int count = 0;
+    for (int x = -blurRadius; x <= blurRadius; x++)
+    {
+        for (int y = -blurRadius; y <= blurRadius; y++)
+        {
+            int2 offset = id.xy + int2(x, y);
+            if (offset.x < 0 || offset.y < 0 || offset.x >= width || offset.y >= height) continue;
+            float d = distance(id.xy, offset.xy);
+            result += Destination[id.xy + int2(x, y)] * exp(d);
+            count++;
+        }
+    }
+    Destination[id.xy] = result / count;
+}
+
+bool shouldRayMarch(uint2 id, uint width, uint height)
+{
+    if (id.x == width / 2 && id.y == height / 2) return true;
+    float off = distance(int2(width/2, height/2), id.xy);
+    if (off <= _BrushSize) return true;
+    bool odds = (_RenderOdds && !(id.x % 2 == 0 && id.y % 2 == 0));
+    bool evens = (!_RenderOdds && (id.x % 2 == 0 && id.y % 2 == 0));
+    return odds || evens;
+}
 
 [numthreads(numThreads, numThreads, 1)]
 void CSMain(uint2 id : SV_DispatchThreadID)
@@ -1070,30 +1099,35 @@ void CSMain(uint2 id : SV_DispatchThreadID)
     uint width, height;
     Destination.GetDimensions(width, height);
 
-    float2 uv = id.xy / float2(width, height);
-
-    // Background gradient
-
-    // Raymarching:
-    Ray ray = CreateCameraRay(uv * 2 - 1);
-
-    float4 result = float4(ray.direction * 0.5 + 0.5, 0);
-
-    RaymarchDDAResult res = raymarchDDA(ray.origin, ray.direction, MAX_RAY_VOX_TRAVERSE_COUNT);
-
-    if (id.x == width / 2 && id.y == height / 2)
+    if (shouldRayMarch(id, width, height))
     {
-        mapPosCenter[0] = res.mapPos;
+        float2 uv = id.xy / float2(width, height);
+        uv += float2(sin(_Time) / width, cos(_Time) / height) * 0.01;
+
+        // Background gradient
+
+        // Raymarching:
+        Ray ray = CreateCameraRay(uv * 2 - 1);
+
+        float4 result = float4(ray.direction * 0.5 + 0.5, 0);
+
+        RaymarchDDAResult res = raymarchDDA(ray.origin, ray.direction, MAX_RAY_VOX_TRAVERSE_COUNT);
+
+        if (id.x == width / 2 && id.y == height / 2)
+        {
+            mapPosCenter[0] = res.mapPos;
+        }
+
+        result.xyz = GetColorAtRaymarchResult(res, ray);
+
+        //result.xyz = raymarchTri(ray);
+
+        Destination[id.xy] = result;
+        blur(id, width, height);
+
+        if (_Terraforming != 0)
+        {
+            terraform(res.mapPos, id, width, height);
+        }
     }
-
-    result.xyz = GetColorAtRaymarchResult(res, ray);
-
-    //result.xyz = raymarchTri(ray);
-
-    if (_Terraforming != 0)
-    {
-        terraform(res.mapPos, id, width, height);
-    }
-
-    Destination[id.xy] = result;
 }

@@ -471,7 +471,8 @@ MonoBehaviour:
   atmosphereSteps: 5
   wavelengths: {x: 700, y: 530, z: 440}
   scatteringStrength: 0.2
-  renderTicks: 20
+  renderTicks: 2
+  resolution: 0.759
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!1 &703060098
 GameObject:
@@ -702,7 +703,7 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 45.2
+  m_fontSize: 44.95
   m_fontSizeBase: 36
   m_fontWeight: 400
   m_enableAutoSizing: 1

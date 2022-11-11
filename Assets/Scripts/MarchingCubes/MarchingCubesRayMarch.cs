@@ -50,6 +50,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
     [Header("Rendering Engine")]
     [SerializeField, Tooltip("# of ticks between each render call (for updating destination render texture)")]
     int renderTicks;
+    [SerializeField, Tooltip("Resolution"), Range(0f, 1f)]
+    float resolution;
 
     public ComputeShader voxelShader;
 
@@ -63,6 +65,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
     Light directionalLight;
 
     int kernelIndex;
+    int width, height;
+    bool renderOdds;
 
     void Start()
     {
@@ -71,6 +75,10 @@ public class MarchingCubesRayMarch : MonoBehaviour
         mapPosCenterBuffer = new ComputeBuffer(1, sizeof(int) * 3);
         mapPosCenter = new Vector3Int[1];
         ticks = 0;
+
+        cam = Camera.main;
+        directionalLight = FindObjectOfType<Light>();
+
     }
 
     private void Update()
@@ -85,8 +93,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
 
     void Init()
     {
-        cam = Camera.current;
-        directionalLight = FindObjectOfType<Light>();
+        width = (int)(cam.pixelWidth * resolution);
+        height = (int)(cam.pixelHeight * resolution);
     }
 
     private void Render()
@@ -95,8 +103,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
         InitRenderTexture();
         SetParameters();
 
-        int threadGroupsX = Mathf.CeilToInt(cam.pixelWidth / 8.0f);
-        int threadGroupsY = Mathf.CeilToInt(cam.pixelHeight / 8.0f);
+        int threadGroupsX = Mathf.CeilToInt(width / 8.0f);
+        int threadGroupsY = Mathf.CeilToInt(height / 8.0f);
         voxelShader.Dispatch(0, threadGroupsX, threadGroupsY, 1);
         GetData();
     }
@@ -151,17 +159,23 @@ public class MarchingCubesRayMarch : MonoBehaviour
 
         mapPosCenterBuffer.SetData(mapPosCenter);
         voxelShader.SetBuffer(0, "mapPosCenter", mapPosCenterBuffer);
+
+        #region Rendering variables
+        renderOdds = !renderOdds;
+        voxelShader.SetBool("_RenderOdds", renderOdds);
+        #endregion
+
     }
 
     void InitRenderTexture()
     {
-        if (target == null || target.width != cam.pixelWidth || target.height != cam.pixelHeight)
+        if (target == null || target.width != width || target.height != height)
         {
             if (target != null)
             {
                 target.Release();
             }
-            target = new RenderTexture(cam.pixelWidth, cam.pixelHeight, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
+            target = new RenderTexture(width, height, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
             target.enableRandomWrite = true;
             target.Create();
         }
