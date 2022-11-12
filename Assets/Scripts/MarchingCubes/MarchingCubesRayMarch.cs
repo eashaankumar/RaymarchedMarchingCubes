@@ -46,6 +46,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
     Vector3 wavelengths = new Vector3(700, 530, 440);
     [SerializeField]
     float scatteringStrength;
+    [SerializeField]
+    float specularStrength;
 
     [Header("Rendering Engine")]
     [SerializeField, Tooltip("# of ticks between each render call (for updating destination render texture)")]
@@ -62,7 +64,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
 
     RenderTexture target, density;
     Camera cam;
-    Light directionalLight;
+    Light sun;
 
     int kernelIndex;
     int width, height;
@@ -77,7 +79,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
         ticks = 0;
 
         cam = Camera.main;
-        directionalLight = FindObjectOfType<Light>();
+        sun = FindObjectOfType<Light>();
 
     }
 
@@ -126,7 +128,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetTexture(0, "Density", density);
         voxelShader.SetMatrix("_CameraToWorld", cam.cameraToWorldMatrix);
         voxelShader.SetMatrix("_CameraInverseProjection", cam.projectionMatrix.inverse);
-        voxelShader.SetVector("_LightDirection", directionalLight.transform.forward);
+        voxelShader.SetVector("_LightDirection", sun.transform.forward);
         voxelShader.SetVector("_AmbientColor", new Vector3(ambientColor.r, ambientColor.g, ambientColor.b));
         voxelShader.SetVector("_GrassColor", new Vector3(grassColor.r, grassColor.g, grassColor.b));
         voxelShader.SetVector("_SandColor", new Vector3(sandColor.r, sandColor.g, sandColor.b));
@@ -137,6 +139,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetFloat("_Impact", impact);
         voxelShader.SetFloat("_Time", Time.time);
         voxelShader.SetFloat("_WaveBreakDepth", waveBreakDepth);
+        voxelShader.SetFloat("_SpecularStrength", specularStrength);
+        voxelShader.SetVector("_SunColor", new Vector3(sun.color.r, sun.color.g, sun.color.b));
 
         #region Atmosphere shader variables
         voxelShader.SetFloat("_AtmosphereRadius", atmosphereRadius);

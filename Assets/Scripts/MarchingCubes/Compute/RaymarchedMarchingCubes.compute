@@ -28,6 +28,8 @@ float _BrushStrength;
 int _BrushSize;
 float _WaveBreakDepth;
 float _Time;
+float _SpecularStrength;
+float3 _SunColor;
 
 // rendering
 bool _RenderOdds;
@@ -40,6 +42,7 @@ int _OpticalDepthSteps;
 int _AtmosphereSteps;
 float3 _ScatterCoefficients = float3(700, 530, 440);
 
+static const float PI = 3.1415925;
 
 static const float epsilon = 0.001;
 static const int MAX_RAY_VOX_TRAVERSE_COUNT = 500;
@@ -876,7 +879,8 @@ bool isShadow(Ray camRay, float3 normal, float3 hitPoint)
 {
     //float3 shadowRayDir = normalize(reflect(-camRay.direction, normal));
     float3 shadowRayDir = -_LightDirection;
-    RaymarchDDAResult shadowResult = raymarchDDA(hitPoint + shadowRayDir * (0), shadowRayDir, MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT);
+    float3 o = hitPoint - camRay.direction * epsilon * 100;
+    RaymarchDDAResult shadowResult = raymarchDDA(o + shadowRayDir * (epsilon * 2), shadowRayDir, MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT);
     return !shadowResult.miss;
 }
 
@@ -957,8 +961,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     float disToSurface = 0;
     float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
     if (!res.miss) {
-        float3 normal = calculateNormal(res.mapPos) + calculateNormal(res.mapPos + float3(1,0,0)) + calculateNormal(res.mapPos + float3(-1, 0, 0)) + calculateNormal(res.mapPos + float3(0, 1, 0)) + calculateNormal(res.mapPos + float3(0, -1, 0)) + calculateNormal(res.mapPos + float3(0,0, 1) + calculateNormal(res.mapPos + float3(0,0,-1)));
-        normal = normalize(normal);
+        float3 normal = calculateNormal(res.mapPos);
         disToSurface = res.pathLength + res.voxelD;
         float diff = dot(normal, -_LightDirection);
         float diffIntensity = 1;
@@ -971,18 +974,18 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 
         // shadow
         float3 shadowColor = float3(1, 1, 1);
-        /*bool shadow = isShadow(camRay, normal, hitPoint);
-        if (shadow) shadowColor *= 0.5;*/
+        bool shadow = isShadow(camRay, normal, hitPoint);
+        if (shadow) shadowColor *= 0.5;
 
         surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;
         
 
         //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
-        if (isVoxelInBrushRadius(res.mapPos))
+        /*if (isVoxelInBrushRadius(res.mapPos))
         {
             float brushdis = distance(res.mapPos, mapPosCenter[0]);
             color = color + float3(1, 0, 0) * (1 - brushdis / _BrushSize);
-        }
+        }*/
 
         //color = float3(1, 1, 1);
         //color = float3(1, 1, 1);
@@ -994,11 +997,13 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     color = surfaceColor;
 
     // ocean
-    //float waveNoise = ridgedNoiseWave(hitPoint);
+    float waveNoise = ridgedNoiseWave(hitPoint);
     float2 oceanRaySphere = raySphere(planetCenter, _OceanRadius, camRay.origin, camRay.direction);
     float3 oceanColor = float3(0, 0, 0);
     float disToWaterSurface = oceanRaySphere.x;
     float disThroughOcean = 0;
+    float oceanNormalNoise = waveNoise * 10;
+    float3 oceanNormal = hitPoint - planetCenter;
     if (oceanRaySphere.y > 0 && disToWaterSurface < MAX_RAY_VOX_TRAVERSE_COUNT/2)
     {
         // Ocean not in path of ray
@@ -1006,6 +1011,8 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         if (res.miss)
         {
             disThroughOcean = oceanRaySphere.y / (_OceanRadius * 2);
+            oceanNormal = normalize(oceanNormal + oceanNormalNoise * exp(1/ disThroughOcean));
+
             oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disThroughOcean);
             oceanColor = saturate(oceanColor);
             color = oceanColor;
@@ -1014,17 +1021,31 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         {
             // Ocean visible
             disThroughOcean = disToSurface - disToWaterSurface;
+            oceanNormal = normalize(oceanNormal + oceanNormalNoise * exp(1 / disThroughOcean));
+
+
             float disT = 1 - disToWaterSurface / disToSurface;
             oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disT);
             // wavebreak
-            if (disThroughOcean <= _WaveBreakDepth)
+            /*if (disThroughOcean <= _WaveBreakDepth)
             {
                 oceanColor = float3(1, 1, 1);
+                color = saturate(oceanColor * 1 / disThroughOcean);
             }
-            //oceanColor *= waveNoise;
-            oceanColor = saturate(oceanColor);
-            surfaceColor = (diffuseColor + _AmbientColor) * voxelColor;
-            color = oceanColor + surfaceColor * 0.1;
+            else*/
+            {
+                // diffuse
+                float diff = max(dot(oceanNormal, -_LightDirection), 0.0);
+                float3 diffuse = diff * _SunColor;
+                // specular
+                float3 reflectDir = reflect(-_LightDirection, oceanNormal);
+                float spec = pow(max(dot(camRay.direction, reflectDir), 0.0), 32);
+                float3 specular = _SpecularStrength * spec * _SunColor;
+                //oceanColor *= waveNoise;
+                oceanColor = saturate((float3(1, 1, 1) * 0.25 + diffuse + specular) * oceanColor);
+                //surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;
+                color = lerp(oceanColor, surfaceColor, saturate(1 / disThroughOcean));
+            }
         }
     }
     
@@ -1064,6 +1085,11 @@ float3 raymarchTri(Ray ray)
     return normalize(d/maxDst) * 0.5 + 0.5;
 }
 
+float gaussian(int2 p, float std)
+{
+    return 1 / (2 * PI * std * std) * exp(-(p.x * p.x + p.y * p.y) / (2 * std * std));
+}
+
 void blur(uint2 id, uint width, uint height)
 {
     float4 result = float4(0,0,0,0);
@@ -1076,11 +1102,11 @@ void blur(uint2 id, uint width, uint height)
             int2 offset = id.xy + int2(x, y);
             if (offset.x < 0 || offset.y < 0 || offset.x >= width || offset.y >= height) continue;
             float d = distance(id.xy, offset.xy);
-            result += Destination[id.xy + int2(x, y)] * exp(d);
+            result += Destination[id.xy + int2(x, y)] * gaussian(int2(x, y), 1);
             count++;
         }
     }
-    Destination[id.xy] = result / count;
+    //Destination[id.xy] = result;
 }
 
 bool shouldRayMarch(uint2 id, uint width, uint height)

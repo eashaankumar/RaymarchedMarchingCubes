@@ -11,11 +11,13 @@ struct Triangle {
     Vertex vertexC;
     Vertex vertexB;
     Vertex vertexA;
+    int3 mapPos;
 };
 
 uint width;
 uint height;
 RWTexture3D<float> Density;
+RWTexture2D<int3> Destination;
 
 AppendStructuredBuffer<Triangle> Triangles;
 RWStructuredBuffer<int3> mapPosCenter; // tracks id of voxel looked at by center pixel
@@ -35,6 +37,9 @@ float3 noisePosition = float3(0,0,0);
 int _Terraforming;
 float _BrushStrength;
 int _BrushSize;
+
+// rendering
+bool _RenderOdds;
 
 
 static const float epsilon = 0.001;
@@ -532,6 +537,7 @@ VoxelTris generateTriangle(int3 id)
     temp.vertexC = tempV;
     temp.vertexB = tempV;
     temp.vertexA = tempV;
+    temp.mapPos = id;
     vTris.triangles[0] = vTris.triangles[1] = vTris.triangles[2] = vTris.triangles[3] = vTris.triangles[4] = vTris.triangles[5] = temp;
     // find tris
     for (int t = 0; t < numTris; t++)
@@ -821,32 +827,65 @@ RaymarchResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     return res;
 }
 
+void AddTriangles(VoxelTris triangles)
+{
+    for (int i = 0; i < triangles.numTris; i++)
+    {
+        Triangles.Append(triangles.triangles[i]);
+    }
+}
+
+bool shouldRayMarch(uint2 id, uint width, uint height)
+{
+    if (id.x == width / 2 && id.y == height / 2) return true;
+    float off = distance(int2(width / 2, height / 2), id.xy);
+    if (off <= _BrushSize) return true;
+    bool odds = (_RenderOdds && !(id.x % 2 == 0 && id.y % 2 == 0));
+    bool evens = (!_RenderOdds && (id.x % 2 == 0 && id.y % 2 == 0));
+    return odds || evens;
+}
 
 [numthreads(numThreads, numThreads, 1)]
 void CSMain(uint2 id : SV_DispatchThreadID)
 {
-    if (!(id.x % 10 == 0 && id.y % 10 == 0)) return;
-    float2 uv = id.xy / float2(width, height);
+    //uint width, height;
+    //Destination.GetDimensions(width, height);
 
-    // Raymarching:
-    Ray ray = CreateCameraRay(uv * 2 - 1);
+    //if (!(id.x % 10 == 0 && id.y % 10 == 0)) return;
 
-    float4 result = float4(ray.direction * 0.5 + 0.5, 0);
-
-    RaymarchResult res = raymarchDDA(ray.origin, ray.direction, MAX_RAY_VOX_TRAVERSE_COUNT);
-
-    if (id.x == width / 2 && id.y == height / 2)
+    if (shouldRayMarch(id, width, height))
     {
-        mapPosCenter[0] = res.mapPos;
-    }
+        float2 uv = id.xy / float2(width, height);
+        // Raymarching:
+        Ray ray = CreateCameraRay(uv * 2 - 1);
 
-    if (_Terraforming != 0)
-    {
-        terraform(res.mapPos, id, width, height);
-    }
+        float4 result = float4(ray.direction * 0.5 + 0.5, 0);
 
-    for (int i = 0; i < res.triangles.numTris; i++)
-    {
-        Triangles.Append(res.triangles.triangles[i]);
+        RaymarchResult res = raymarchDDA(ray.origin, ray.direction, MAX_RAY_VOX_TRAVERSE_COUNT);
+
+        if (id.x == width / 2 && id.y == height / 2)
+        {
+            mapPosCenter[0] = res.mapPos;
+        }
+
+        if (_Terraforming != 0)
+        {
+            terraform(res.mapPos, id, width, height);
+        }
+
+        Destination[id.xy] = res.mapPos;
+        //AddTriangles(res.triangles);
+        /*int r = 1;
+        for (int x = -r; x <= r; x++)
+        {
+            for (int y = -r; y <= r; y++)
+            {
+                for (int z = -r; z <= r; z++)
+                {
+                    if (x == 0 && y == 0 && z == 0) continue;
+                    AddTriangles(generateTriangle(res.mapPos + int3(x, y, z)));
+                }
+            }
+        }*/
     }
 }

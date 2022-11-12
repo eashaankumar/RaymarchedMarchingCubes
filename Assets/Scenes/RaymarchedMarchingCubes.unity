@@ -453,8 +453,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c7bcc638254a40a4ab76be09cb7fadff, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  scale: 0.52
-  impact: 0.2
+  scale: 17.2
+  impact: 0.29
   ambientColor: {r: 0.2, g: 0.2, b: 0.2, a: 0}
   grassColor: {r: 0, g: 1, b: 0.11764706, a: 0}
   dirtColor: {r: 0.7058824, g: 0.24313726, b: 0, a: 0}
@@ -464,14 +464,15 @@ MonoBehaviour:
   brushStrength: 0.001
   brushSize: 5
   oceanRadius: 245
-  waveBreakDepth: 0.5
+  waveBreakDepth: 0.74
   atmosphereRadius: 296.3
   atmosphereDensityFallOff: 3.62
   opticalDepthSteps: 5
   atmosphereSteps: 5
   wavelengths: {x: 700, y: 530, z: 440}
   scatteringStrength: 0.2
-  renderTicks: 2
+  specularStrength: 0.31
+  renderTicks: 10
   resolution: 0.759
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!1 &703060098
@@ -703,7 +704,7 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 44.95
+  m_fontSize: 45.55
   m_fontSizeBase: 36
   m_fontWeight: 400
   m_enableAutoSizing: 1

@@ -4,5 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Scenes/VoxelsToTris.unity
+    guid: c83d6f085b4fd5f4c8099534f08d78fe
   m_configObjects: {}
