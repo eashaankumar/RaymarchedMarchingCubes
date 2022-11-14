@@ -9,6 +9,10 @@ public class MarchingCubesRayMarch : MonoBehaviour
     float scale;
     [SerializeField]
     float impact;
+    [SerializeField]
+    float octaves;
+    [SerializeField, Tooltip("Compensation for adding noise")]
+    float planetRadiusOffset;
     [Header("Generator settings")]
     [SerializeField]
     Color ambientColor;
@@ -26,6 +30,10 @@ public class MarchingCubesRayMarch : MonoBehaviour
     float brushStrength;
     [SerializeField]
     int brushSize;
+
+    [Header("Planet Settings")]
+    [SerializeField]
+    float planetRadius;
 
     [Header("Ocean Settings")]
     [SerializeField]
@@ -80,7 +88,19 @@ public class MarchingCubesRayMarch : MonoBehaviour
 
         cam = Camera.main;
         sun = FindObjectOfType<Light>();
+        FillDensity();
+    }
 
+    void FillDensity()
+    {
+        int densityKernel = voxelShader.FindKernel("DensityKernel");
+
+        Init();
+        InitRenderTexture();
+        SetParameters(densityKernel);
+
+        int threadGroupsSize = Mathf.CeilToInt(1000 / 8.0f);
+        voxelShader.Dispatch(densityKernel, threadGroupsSize, threadGroupsSize, threadGroupsSize);
     }
 
     private void Update()
@@ -103,7 +123,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
     {
         Init();
         InitRenderTexture();
-        SetParameters();
+        SetParameters(kernelIndex);
 
         int threadGroupsX = Mathf.CeilToInt(width / 8.0f);
         int threadGroupsY = Mathf.CeilToInt(height / 8.0f);
@@ -121,11 +141,11 @@ public class MarchingCubesRayMarch : MonoBehaviour
         mapPosCenterBuffer.GetData(mapPosCenter);
     }
 
-    void SetParameters()
+    void SetParameters(int kernelIndex)
     {
         brushStrength = Mathf.Abs(brushStrength);
-        voxelShader.SetTexture(0, "Destination", target);
-        voxelShader.SetTexture(0, "Density", density);
+        voxelShader.SetTexture(kernelIndex, "Destination", target);
+        voxelShader.SetTexture(kernelIndex, "Density", density);
         voxelShader.SetMatrix("_CameraToWorld", cam.cameraToWorldMatrix);
         voxelShader.SetMatrix("_CameraInverseProjection", cam.projectionMatrix.inverse);
         voxelShader.SetVector("_LightDirection", sun.transform.forward);
@@ -137,10 +157,12 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetVector("_WaterColorDeep", new Vector3(waterColorDeep.r, waterColorDeep.g, waterColorDeep.b));
         voxelShader.SetFloat("_Scale", scale);
         voxelShader.SetFloat("_Impact", impact);
+        voxelShader.SetFloat("_Octaves", octaves);
         voxelShader.SetFloat("_Time", Time.time);
         voxelShader.SetFloat("_WaveBreakDepth", waveBreakDepth);
         voxelShader.SetFloat("_SpecularStrength", specularStrength);
         voxelShader.SetVector("_SunColor", new Vector3(sun.color.r, sun.color.g, sun.color.b));
+        voxelShader.SetFloat("planetRadius", planetRadiusOffset + planetRadius);
 
         #region Atmosphere shader variables
         voxelShader.SetFloat("_AtmosphereRadius", atmosphereRadius);
@@ -162,7 +184,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetInt("_BrushSize", brushSize);
 
         mapPosCenterBuffer.SetData(mapPosCenter);
-        voxelShader.SetBuffer(0, "mapPosCenter", mapPosCenterBuffer);
+        voxelShader.SetBuffer(kernelIndex, "mapPosCenter", mapPosCenterBuffer);
 
         #region Rendering variables
         renderOdds = !renderOdds;
