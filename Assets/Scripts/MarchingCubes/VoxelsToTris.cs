@@ -15,6 +15,23 @@ public class VoxelsToTris : MonoBehaviour
     const int MAX_TRIS_PER_VOXEL = 6;
 
     #region Structs
+    struct Ray
+    {
+        public float3 origin;
+        public float3 direction;
+    };
+    struct VoxelTris
+    {
+        public Triangle[] triangles;
+        public int numTris;
+    };
+    struct RaymarchResult
+    {
+        public bool miss;
+        public int3 mapPos;
+        public VoxelTris triangles;
+    };
+
     const int TRIANGLE_STRUCT_SIZE = sizeof(float) * 3 * 2 * 3 + sizeof(int) * 3;
     static float3 VECTOR_ERROR = new float3(1,1,1) * 0.0000001f;
     public struct Vertex : IEquatable<Vertex>
@@ -98,10 +115,8 @@ public class VoxelsToTris : MonoBehaviour
 
     public ComputeShader voxelShader;
 
-    ComputeBuffer mapPosCenterBuffer, trianglesBuffer;
     Vector3Int[] mapPosCenter;
 
-    RenderTexture density, voxelIntersections;
     Camera cam;
     Light directionalLight;
 
@@ -112,19 +127,28 @@ public class VoxelsToTris : MonoBehaviour
     int width, height;
     bool renderOdds;
 
-    int densityGridSize = 1000;
+    int densityGridSize = 10;
+    NativeParallelHashMap<int3, float> densityMap;
+    NativeArray<int3> cubeToCubeVertexArray;
+    NativeArray<int2> edgeToCornersArray;
+    NativeArray<float3> directionsArray;
+    NativeArray<int> caseToNumPolysArray;
+    NativeArray<int> edge_connect_listArray;
 
     #region MonoBehavior
     void Start()
     {
         kernelIndex = voxelShader.FindKernel("CSMain");
-
-        mapPosCenterBuffer = new ComputeBuffer(1, sizeof(int) * 3);
-        mapPosCenter = new Vector3Int[1];
-
         cam = Camera.main;
         directionalLight = FindObjectOfType<Light>();
         canRender = true;
+        densityMap = new NativeParallelHashMap<int3, float>(100000, Allocator.Persistent);
+
+        cubeToCubeVertexArray = new NativeArray<int3>(cornerToCubeVertex, Allocator.Persistent);
+        edgeToCornersArray = new NativeArray<int2>(edgeToCorners, Allocator.Persistent);
+        directionsArray = new NativeArray<float3>(directions, Allocator.Persistent);
+        caseToNumPolysArray = new NativeArray<int>(caseToNumPolys, Allocator.Persistent);
+        edge_connect_listArray = new NativeArray<int>(edge_connect_list, Allocator.Persistent);
     }
 
     private void Update()
@@ -134,8 +158,6 @@ public class VoxelsToTris : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (mapPosCenterBuffer != null) mapPosCenterBuffer.Dispose();
-        if (trianglesBuffer != null) trianglesBuffer.Dispose();
     }
     #endregion
 
@@ -150,14 +172,15 @@ public class VoxelsToTris : MonoBehaviour
     {
         if (!canRender) return;
         Init();
-        InitRenderTexture();
-        SetParameters();
+        //InitRenderTexture();
+        //SetParameters();
 
-        int threadGroupsX = Mathf.CeilToInt(width / 8.0f);
+        /*int threadGroupsX = Mathf.CeilToInt(width / 8.0f);
         int threadGroupsY = Mathf.CeilToInt(height / 8.0f);
         canRender = false;
-        voxelShader.Dispatch(0, threadGroupsX, threadGroupsY, 1);
-        StartCoroutine(GetData());
+        voxelShader.Dispatch(0, threadGroupsX, threadGroupsY, 1);*/
+        //StartCoroutine(GetData());
+        GetData();
 
     }
 
@@ -175,50 +198,30 @@ public class VoxelsToTris : MonoBehaviour
         UnsafeUtility.ReleaseGCObject(handle);
     }
 
-    IEnumerator GetData()
+    unsafe void GetData()
     {
-        yield return null;
-        mapPosCenterBuffer.GetData(mapPosCenter);
-        /*ComputeBuffer triCountBuffer = new ComputeBuffer(1, sizeof(int), ComputeBufferType.Raw);
-        ComputeBuffer.CopyCount(trianglesBuffer, triCountBuffer, 0);
-        int[] triCountArray = { 0 };
-        triCountBuffer.GetData(triCountArray);
-        int numTris = triCountArray[0];
-
-        Triangle[] ts = new Triangle[numTris];
-        trianglesBuffer.GetData(ts);
-        trianglesBuffer.Dispose();*/
-
-        yield return null;
         #region Job System
         // Grab voxel intersections
-        Texture2D voxIntTex = new Texture2D(width, height, TextureFormat.ARGB32, false);
-        Rect rectReadPicture = new Rect(0, 0, width, height);
-        RenderTexture.active = voxelIntersections;
-        // Read pixels
-        voxIntTex.ReadPixels(rectReadPicture, 0, 0);
-        voxIntTex.Apply();
-        RenderTexture.active = null; // added to avoid errors 
-
-        // Grab voxel intersections
-        /*Texture3D denTex = new Texture3D(densityGridSize, densityGridSize, densityGridSize, TextureFormat.ARGB32, false);
-        Rect rectReadPicture = new Rect(0, 0, width, height);
-        RenderTexture.active = voxelIntersections;
-        // Read pixels
-        denTex.SetPixels(rectReadPicture, 0, 0);
-        denTex.Apply();
-        RenderTexture.active = null; // added to avoid errors */
-
-
         NativeList<float3> vertices = new NativeList<float3>(width * height * 5 * 3, Allocator.TempJob);
         NativeList<float3> normals = new NativeList<float3>(width * height * 5 * 3, Allocator.TempJob);
         NativeList<int> indices = new NativeList<int>(width * height * 5 * 3, Allocator.TempJob);
+
         MeshConverterJob job = new MeshConverterJob()
         {
             vertices = vertices,
             normals = normals,
             indices = indices,
-            voxelIntersections = voxIntTex.GetRawTextureData<int3>(),
+            densityMap = densityMap,
+            width = width,
+            height = height,
+            maxStepCount = 500,
+            _CameraToWorld = cam.cameraToWorldMatrix,
+            _CameraInverseProjection = cam.projectionMatrix.inverse,
+            cornerToCubeVertex = cubeToCubeVertexArray,
+            edgeToCorners = edgeToCornersArray,
+            directions = directionsArray,
+            caseToNumPolys = caseToNumPolysArray,
+            edge_connect_list = edge_connect_listArray
         };
         JobHandle handle = job.Schedule(width * height, 64);
         handle.Complete();
@@ -270,7 +273,6 @@ public class VoxelsToTris : MonoBehaviour
         #endregion
 
         canRender = true;
-        yield break;
     }
 
     #region Helpers
@@ -288,255 +290,11 @@ public class VoxelsToTris : MonoBehaviour
 
         canRender = true;
     }
-
-    void SetParameters()
-    {
-        brushStrength = Mathf.Abs(brushStrength);
-        voxelShader.SetInt("width", width);
-        voxelShader.SetInt("height", height);
-        voxelShader.SetTexture(kernelIndex, "Density", density);
-        voxelShader.SetTexture(kernelIndex, "Destination", voxelIntersections);
-        voxelShader.SetMatrix("_CameraToWorld", cam.cameraToWorldMatrix);
-        voxelShader.SetMatrix("_CameraInverseProjection", cam.projectionMatrix.inverse);
-        voxelShader.SetVector("_LightDirection", directionalLight.transform.forward);
-        voxelShader.SetVector("_AmbientColor", new Vector3(ambientColor.r, ambientColor.g, ambientColor.b));
-        voxelShader.SetVector("_GrassColor", new Vector3(grassColor.r, grassColor.g, grassColor.b));
-        voxelShader.SetVector("_SandColor", new Vector3(sandColor.r, sandColor.g, sandColor.b));
-        voxelShader.SetVector("_DirtColor", new Vector3(dirtColor.r, dirtColor.g, dirtColor.b));
-        voxelShader.SetVector("_WaterColor", new Vector3(waterColor.r, waterColor.g, waterColor.b));
-        voxelShader.SetFloat("_Scale", scale);
-        voxelShader.SetFloat("_Impact", impact);
-
-        int terra = 0;
-        if (Input.GetMouseButton(0)) terra = 1;
-        else if (Input.GetMouseButton(1)) terra = -1;
-        voxelShader.SetInt("_Terraforming", terra);
-        voxelShader.SetFloat("_BrushStrength", brushStrength);
-        voxelShader.SetInt("_BrushSize", brushSize);
-
-        mapPosCenterBuffer.SetData(mapPosCenter);
-        voxelShader.SetBuffer(0, "mapPosCenter", mapPosCenterBuffer);
-
-        /*trianglesBuffer = new ComputeBuffer(width * height * 6, TRIANGLE_STRUCT_SIZE, ComputeBufferType.Append);
-        trianglesBuffer.SetCounterValue(0);
-        voxelShader.SetBuffer(kernelIndex, "Triangles", trianglesBuffer);*/
-
-        renderOdds = !renderOdds;
-        voxelShader.SetBool("_RenderOdds", renderOdds);
-    }
-
-    void InitRenderTexture()
-    {
-        if (voxelIntersections == null || voxelIntersections.width != width || voxelIntersections.height != height)
-        {
-            if (voxelIntersections != null)
-            {
-                voxelIntersections.Release();
-            }
-            voxelIntersections = new RenderTexture(width, height, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
-            voxelIntersections.enableRandomWrite = true;
-            voxelIntersections.Create();
-        }
-        Create3DTexture(ref density, densityGridSize, "Density");
-    }
-
-    void Create3DTexture(ref RenderTexture texture, int size, string name)
-    {
-        //
-        var format = UnityEngine.Experimental.Rendering.GraphicsFormat.R32_SFloat;
-        if (texture == null || !texture.IsCreated() || texture.width != size || texture.height != size || texture.volumeDepth != size || texture.graphicsFormat != format)
-        {
-            //Debug.Log ("Create tex: update noise: " + updateNoise);
-            if (texture != null)
-            {
-                texture.Release();
-            }
-            const int numBitsInDepthBuffer = 0;
-            texture = new RenderTexture(size, size, numBitsInDepthBuffer);
-            texture.graphicsFormat = format;
-            texture.volumeDepth = size;
-            texture.enableRandomWrite = true;
-            texture.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
-
-
-            texture.Create();
-        }
-        texture.wrapMode = TextureWrapMode.Repeat;
-        texture.filterMode = FilterMode.Bilinear;
-        texture.name = name;
-    }
     #endregion
     #endregion
 
     #region Jobs
-    [BurstCompile]
-    struct MeshConverterJob : IJobParallelFor
-    {
-        [NativeDisableParallelForRestriction]
-        public NativeList<float3> vertices;
-        [NativeDisableParallelForRestriction]
-        public NativeList<float3> normals;
-        [NativeDisableParallelForRestriction]
-        public NativeList<int> indices;
-        [ReadOnly]
-        public NativeArray<int3> voxelIntersections;
-        [ReadOnly]
-        public static NativeArray<float> Density;
-        [ReadOnly]
-        public static float planetRadius;
-        [ReadOnly]
-        public static float planetCenter;
-        [ReadOnly]
-        public static float noisePosition;
-
-        public static int densityGridSize = 1000; // num points per axis
-
-        public void Execute(int index)
-        {
-            int3 mapPos = voxelIntersections[index];
-            CreateTrisForCube(mapPos);
-        }
-
-        void CreateTrisForCube(int3 id)
-        {
-            int caseByte = cellCase(id);
-            int numTris = caseToNumPolys[caseByte];
-            for (int t = 0; t < numTris; t++)
-            {
-                int[] edgesOfTri = fromVec2ECL(caseByte, t);
-
-                Vertex triVertexOnEdge1 = VertexFromInterpolatedNoise(edgesOfTri[0], id);
-                Vertex triVertexOnEdge2 = VertexFromInterpolatedNoise(edgesOfTri[1], id);
-                Vertex triVertexOnEdge3 = VertexFromInterpolatedNoise(edgesOfTri[2], id);
-
-                // add tris
-            }
-        }
-
-        static float sampleDensity(int3 p)
-        {
-            int3 worldToLocal = p + new int3(1, 1, 1) * 1000 / 2;
-            int index = (densityGridSize / 2 * densityGridSize / 2 * worldToLocal.z) + (worldToLocal.y * densityGridSize / 2) + worldToLocal.x;
-            if (index < 0 || index >= Density.Length) return 0;
-            return Density[index];
-        }
-
-        static float density(int3 p)
-        {
-            /*float3 p = float3(c)+float3(1, 1, 1) * 0.5;
-            const float3 off = float3(2134, 213, 24);
-            float d = distance(p, planetCtr);
-            float3 pp = p + noisePosition;
-            float noise = lerpF(-1.0, 1.0, d / (planetRadius * 2));
-            return noise + (ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * 2 - 1) * surfaceNoiseImpact;*/
-
-            float3 worldPos = p;
-            float d = math.distancesq(worldPos, planetCenter);
-            float noise = math.lerp(-1, 1, math.saturate(d / (planetRadius * 2)));
-            float3 pp = worldPos + noisePosition;
-            float den = sampleDensity(p);
-            //return noise + ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * surfaceNoiseImpact;
-            //return noise + ridgedNoise(normalize(pp * _Scale)) * _Impact;
-            return noise + den;
-        }
-
-        static int getBit(int3 v)
-        {
-            return density(v) < 0 ? 0 : 1;
-        }
-
-        static int cellCase(int3 v0)
-        {
-            int v0x = v0.x, v0y = v0.y, v0z = v0.z;
-            int3 v1 = new int3(v0x, v0y + 1, v0z);
-            int3 v2 = new int3(v0x + 1, v0y + 1, v0z);
-            int3 v3 = new int3(v0x + 1, v0y, v0z);
-            int3 v4 = new int3(v0x, v0y, v0z + 1);
-            int3 v5 = new int3(v0x, v0y + 1, v0z + 1);
-            int3 v6 = new int3(v0x + 1, v0y + 1, v0z + 1);
-            int3 v7 = new int3(v0x + 1, v0y, v0z + 1);
-
-            int caseByte = getBit(v7) << 7 | getBit(v6) << 6 |
-                getBit(v5) << 5 | getBit(v4) << 4 |
-                getBit(v3) << 3 | getBit(v2) << 2 |
-                getBit(v1) << 1 | getBit(v0);
-            return caseByte;
-        }
-
-        Vertex VertexFromInterpolatedNoise(int edgeId, int3 cubePos)
-        {
-            Vertex v;
-            int2 edgeCorners = edgeToCorners[edgeId];
-            int3 cornerA = CubeCornersToChunkNoiseGridPoints(edgeCorners.x, cubePos);
-            int3 cornerB = CubeCornersToChunkNoiseGridPoints(edgeCorners.y, cubePos);
-            float time = InterpolateTriangleVertexOnCubeEdge(cornerA, cornerB);
-            float3 cornerAWorld = NoiseGridToWorldPos(cornerA);
-            float3 cornerBWorld = NoiseGridToWorldPos(cornerB);
-            v.position = math.lerp(cornerAWorld, cornerBWorld, time);
-
-            float3 normalA = calculateNormal(cornerA);
-            float3 normalB = calculateNormal(cornerB);
-            v.normal = math.normalize(math.lerp(normalA, normalB, time));
-            return v;
-        }
-
-        static int3[] cornerToCubeVertex = {
-            new int3(0, 0, 0),
-            new int3(0, 1, 0),
-            new int3(1, 1, 0),
-            new int3(1, 0, 0),
-            new int3(0, 0, 1),
-            new int3(0, 1, 1),
-            new int3(1, 1, 1),
-            new int3(1, 0, 1)
-        };
-
-        static int2[] edgeToCorners = {
-            new int2(0, 1),
-            new int2(1, 2),
-            new int2(3, 2),
-            new int2(0, 3),
-            new int2(4, 5),
-            new int2(5, 6),
-            new int2(7, 6),
-            new int2(4, 7),
-            new int2(0, 4),
-            new int2(1, 5),
-            new int2(2, 6),
-            new int2(3, 7)
-        };
-
-        int3 CubeCornersToChunkNoiseGridPoints(int corner, int3 cubePos)
-        {
-            return cornerToCubeVertex[corner] + cubePos;
-        }
-
-        float invLerp(float from, float to, float value)
-        {
-            return (value - from) / (to - from);
-        }
-
-        float InterpolateTriangleVertexOnCubeEdge(int3 cornerA, int3 cornerB)
-        {
-            return invLerp(density(cornerA), density(cornerB), 0);
-        }
-
-        float3 NoiseGridToWorldPos(int3 p)
-        {
-            return new float3(p.x, p.y, p.z);
-        }
-
-        float3 calculateNormal(int3 coord)
-        {
-            float dx = density(coord + normalOffset.xyy) - density(coord - normalOffset.xyy);
-            float dy = density(coord + normalOffset.yxy) - density(coord - normalOffset.yxy);
-            float dz = density(coord + normalOffset.yyx) - density(coord - normalOffset.yyx);
-            return math.normalize(new float3(dx, dy, dz));
-            //return normalize(coord);
-        }
-        static int2 normalOffset = new int2(1, 0);
-
-        static float3[] directions = {
+    static float3[] directions = {
             new float3(1, 1, 0),
             new float3(-1, 1, 0),
             new float3(1,-1, 0),
@@ -555,7 +313,7 @@ public class VoxelsToTris : MonoBehaviour
             new float3(0,-1,-1)
         };
 
-        static int[] caseToNumPolys = {
+    static int[] caseToNumPolys = {
             0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 2, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 3,
             1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 3, 2, 3, 3, 2, 3, 4, 4, 3, 3, 4, 4, 3, 4, 5, 5, 2,
             1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 3, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 4,
@@ -566,8 +324,8 @@ public class VoxelsToTris : MonoBehaviour
             3, 4, 4, 5, 4, 5, 3, 4, 4, 5, 5, 2, 3, 4, 2, 1, 2, 3, 3, 2, 3, 4, 2, 1, 3, 2, 4, 1, 2, 1, 1, 0
         };
 
-        // 256 rows, 5 vec4s (ignore 4th component) representing edges
-        static int[] edge_connect_list = {
+    // 256 rows, 5 vec4s (ignore 4th component) representing edges
+    static int[] edge_connect_list = {
             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
             0, 8, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
             0, 1, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -826,13 +584,303 @@ public class VoxelsToTris : MonoBehaviour
             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
             };
 
+    static int3[] cornerToCubeVertex = {
+            new int3(0, 0, 0),
+            new int3(0, 1, 0),
+            new int3(1, 1, 0),
+            new int3(1, 0, 0),
+            new int3(0, 0, 1),
+            new int3(0, 1, 1),
+            new int3(1, 1, 1),
+            new int3(1, 0, 1)
+        };
+    
+    static int2[] edgeToCorners = {
+            new int2(0, 1),
+            new int2(1, 2),
+            new int2(3, 2),
+            new int2(0, 3),
+            new int2(4, 5),
+            new int2(5, 6),
+            new int2(7, 6),
+            new int2(4, 7),
+            new int2(0, 4),
+            new int2(1, 5),
+            new int2(2, 6),
+            new int2(3, 7)
+        };
+    [BurstCompile]
+    struct MeshConverterJob : IJobParallelFor
+    {
+        [NativeDisableParallelForRestriction]
+        public NativeList<float3> vertices;
+        [NativeDisableParallelForRestriction]
+        public NativeList<float3> normals;
+        [NativeDisableParallelForRestriction]
+        public NativeList<int> indices;
+        [ReadOnly]
+        public NativeParallelHashMap<int3,float> densityMap;
+        [ReadOnly]
+        public static float planetRadius;
+        [ReadOnly]
+        public static float planetCenter;
+        [ReadOnly]
+        public static float noisePosition;
+        [ReadOnly]
+        public int width;
+        [ReadOnly]
+        public int height;
+        [ReadOnly]
+        public int maxStepCount;
+        [ReadOnly]
+        public float4x4 _CameraToWorld;
+        [ReadOnly]
+        public float4x4 _CameraInverseProjection;
+
+        int2 getId(int index)
+        {
+            return new int2(index % width, index / width);
+        }
+
+        public void Execute(int index)
+        {
+            int2 id = getId(index);
+            float2 uv = id.xy / new float2(width, height);
+            // Raymarching:
+            Ray ray = CreateCameraRay(uv * 2 - 1);
+
+            float4 result = new float4( ray.direction * 0.5f + 0.5f, 0);
+            RaymarchResult raymarchResult = raymarchDDA(ray.origin, ray.direction, maxStepCount);
+            if (!raymarchResult.miss)
+            {
+                CreateTrisForCube(raymarchResult.mapPos);
+            }
+        }
+
+
+        Ray CreateRay(float3 origin, float3 direction)
+        {
+            Ray ray;
+            ray.origin = origin;
+            ray.direction = direction;
+            return ray;
+        }
+
+        Ray CreateCameraRay(float2 uv)
+        {
+            float3 origin = math.mul(_CameraToWorld, new float4(0, 0, 0, 1)).xyz;
+            float3 direction = math.mul(_CameraInverseProjection, new float4(uv, 0, 1)).xyz;
+            direction = math.mul(_CameraToWorld, new float4(direction, 0)).xyz;
+            direction = math.normalize(direction);
+            return CreateRay(origin, direction);
+        }
+
+        RaymarchResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
+        {
+            // https://www.shadertoy.com/view/4dX3zl
+            float3 p = o;
+            // which box of the map we're in
+            int3 mapPos = new int3(math.floor(p));
+            // length of ray from one xyz-side to another xyz-sideDist
+            float3 deltaDist = math.abs(new float3(1, 1, 1) * math.length(dir) / dir);
+            int3 rayStep = new int3(math.sign(dir));
+            // length of ray from current position to next xyz-side
+            float3 sideDist = (math.sign(dir) * (math.float3(mapPos.x, mapPos.y, mapPos.z) - o) + (math.sign(dir) * 0.5f) + 0.5f) * deltaDist;
+            bool3 mask;
+            bool miss = false;
+            float pathLength = 0;
+            RaymarchResult res = new RaymarchResult();
+            for (int i = 0; i < maxStepCount; i++)
+            {
+                //hits = hitsSurface(mapPos, o + dir * pathLength, dir, o + getVoxelExitOffset(sideDist, deltaDist));
+                VoxelTris triangles = CreateTrisForCube(mapPos);
+                if (triangles.numTris > 0)
+                {
+                    res.triangles = triangles;
+                    break;
+                }
+                if (sideDist.x < sideDist.y)
+                {
+                    if (sideDist.x < sideDist.z)
+                    {
+                        pathLength = sideDist.x;
+                        sideDist.x += deltaDist.x;
+                        mapPos.x += rayStep.x;
+                        //mask = bool3(true, false, false);
+                    }
+                    else
+                    {
+                        pathLength = sideDist.z;
+                        sideDist.z += deltaDist.z;
+                        mapPos.z += rayStep.z;
+                        //mask = bool3(false, false, true);
+                    }
+                }
+                else
+                {
+                    if (sideDist.y < sideDist.z)
+                    {
+                        pathLength = sideDist.y;
+                        sideDist.y += deltaDist.y;
+                        mapPos.y += rayStep.y;
+                        //mask = bool3(false, true, false);
+                    }
+                    else
+                    {
+                        pathLength = sideDist.z;
+                        sideDist.z += deltaDist.z;
+                        mapPos.z += rayStep.z;
+                        //mask = bool3(false, false, true);
+                    }
+                }
+                if (i == maxStepCount - 1)
+                {
+                    miss = true;
+                }
+            }
+            res.miss = miss;
+            res.mapPos = mapPos;
+            return res;
+        }
+
+        VoxelTris CreateTrisForCube(int3 id)
+        {
+            int caseByte = cellCase(id);
+            int numTris = caseToNumPolys[caseByte];
+            VoxelTris voxelTris = new VoxelTris();
+            voxelTris.numTris = numTris;
+            voxelTris.triangles = new Triangle[numTris];
+            for (int t = 0; t < numTris; t++)
+            {
+                int[] edgesOfTri = fromVec2ECL(caseByte, t);
+
+                Vertex triVertexOnEdge1 = VertexFromInterpolatedNoise(edgesOfTri[0], id);
+                Vertex triVertexOnEdge2 = VertexFromInterpolatedNoise(edgesOfTri[1], id);
+                Vertex triVertexOnEdge3 = VertexFromInterpolatedNoise(edgesOfTri[2], id);
+
+                // add tris
+                Triangle triangle = new Triangle();
+                triangle.a = triVertexOnEdge1;
+                triangle.b = triVertexOnEdge2;
+                triangle.c = triVertexOnEdge3;
+                voxelTris.triangles[t] = triangle;
+            }
+            return voxelTris;
+        }
+
+        float sampleDensity(int3 p)
+        {
+            if (densityMap.ContainsKey(p)) return densityMap[p];
+            return 0;
+        }
+
+        float density(int3 p)
+        {
+            /*float3 p = float3(c)+float3(1, 1, 1) * 0.5;
+            const float3 off = float3(2134, 213, 24);
+            float d = distance(p, planetCtr);
+            float3 pp = p + noisePosition;
+            float noise = lerpF(-1.0, 1.0, d / (planetRadius * 2));
+            return noise + (ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * 2 - 1) * surfaceNoiseImpact;*/
+
+            float3 worldPos = p;
+            float d = math.distancesq(worldPos, planetCenter);
+            float noise = math.lerp(-1, 1, math.saturate(d / (planetRadius * 2)));
+            float3 pp = worldPos + noisePosition;
+            float den = sampleDensity(p);
+            //return noise + ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * surfaceNoiseImpact;
+            //return noise + ridgedNoise(normalize(pp * _Scale)) * _Impact;
+            return noise + den;
+        }
+
+        int getBit(int3 v)
+        {
+            return density(v) < 0 ? 0 : 1;
+        }
+
+        int cellCase(int3 v0)
+        {
+            int v0x = v0.x, v0y = v0.y, v0z = v0.z;
+            int3 v1 = new int3(v0x, v0y + 1, v0z);
+            int3 v2 = new int3(v0x + 1, v0y + 1, v0z);
+            int3 v3 = new int3(v0x + 1, v0y, v0z);
+            int3 v4 = new int3(v0x, v0y, v0z + 1);
+            int3 v5 = new int3(v0x, v0y + 1, v0z + 1);
+            int3 v6 = new int3(v0x + 1, v0y + 1, v0z + 1);
+            int3 v7 = new int3(v0x + 1, v0y, v0z + 1);
+
+            int caseByte = getBit(v7) << 7 | getBit(v6) << 6 |
+                getBit(v5) << 5 | getBit(v4) << 4 |
+                getBit(v3) << 3 | getBit(v2) << 2 |
+                getBit(v1) << 1 | getBit(v0);
+            return caseByte;
+        }
+
+        Vertex VertexFromInterpolatedNoise(int edgeId, int3 cubePos)
+        {
+            Vertex v;
+            int2 edgeCorners = edgeToCorners[edgeId];
+            int3 cornerA = CubeCornersToChunkNoiseGridPoints(edgeCorners.x, cubePos);
+            int3 cornerB = CubeCornersToChunkNoiseGridPoints(edgeCorners.y, cubePos);
+            float time = InterpolateTriangleVertexOnCubeEdge(cornerA, cornerB);
+            float3 cornerAWorld = NoiseGridToWorldPos(cornerA);
+            float3 cornerBWorld = NoiseGridToWorldPos(cornerB);
+            v.position = math.lerp(cornerAWorld, cornerBWorld, time);
+
+            float3 normalA = calculateNormal(cornerA);
+            float3 normalB = calculateNormal(cornerB);
+            v.normal = math.normalize(math.lerp(normalA, normalB, time));
+            return v;
+        }
+
+        [ReadOnly]
+        public NativeArray<int3> cornerToCubeVertex;
+        [ReadOnly]
+        public NativeArray<int2> edgeToCorners;
+        [ReadOnly]
+        public NativeArray<float3> directions;
+        [ReadOnly]
+        public NativeArray<int> caseToNumPolys;
+        [ReadOnly]
+        public NativeArray<int> edge_connect_list;
+
+        int3 CubeCornersToChunkNoiseGridPoints(int corner, int3 cubePos)
+        {
+            return cornerToCubeVertex[corner] + cubePos;
+        }
+
+        float invLerp(float from, float to, float value)
+        {
+            return (value - from) / (to - from);
+        }
+
+        float InterpolateTriangleVertexOnCubeEdge(int3 cornerA, int3 cornerB)
+        {
+            return invLerp(density(cornerA), density(cornerB), 0);
+        }
+
+        float3 NoiseGridToWorldPos(int3 p)
+        {
+            return new float3(p.x, p.y, p.z);
+        }
+
+        float3 calculateNormal(int3 coord)
+        {
+            int2 normalOffset = new int2(1, 0);
+            float dx = density(coord + normalOffset.xyy) - density(coord - normalOffset.xyy);
+            float dy = density(coord + normalOffset.yxy) - density(coord - normalOffset.yxy);
+            float dz = density(coord + normalOffset.yyx) - density(coord - normalOffset.yyx);
+            return math.normalize(new float3(dx, dy, dz));
+            //return normalize(coord);
+        }
+
         /// <summary>
         /// Returns edge triplet given case if of voxel and poligon index desired from edge_connect_list
         /// </summary>
         /// <param name="caseId">[0,256)</param>
         /// <param name="polygonI">[0, 4)</param>
         /// <returns></returns>
-        static int[] fromVec2ECL(int caseId, int polygonI)
+        int[] fromVec2ECL(int caseId, int polygonI)
         {
             int[] edges = new int[3];
             int row = caseId;

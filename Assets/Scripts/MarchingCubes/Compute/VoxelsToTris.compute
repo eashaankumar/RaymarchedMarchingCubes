@@ -16,11 +16,12 @@ struct Triangle {
 
 uint width;
 uint height;
-RWTexture3D<float> Density;
+RWStructuredBuffer<float> Density;
 RWTexture2D<int3> Destination;
 
 AppendStructuredBuffer<Triangle> Triangles;
 RWStructuredBuffer<int3> mapPosCenter; // tracks id of voxel looked at by center pixel
+RWStructuredBuffer<int3> VoxelIntersections;
 
 float4x4 _CameraToWorld;
 float4x4 _CameraInverseProjection;
@@ -40,6 +41,8 @@ int _BrushSize;
 
 // rendering
 bool _RenderOdds;
+
+float densityGridSize;
 
 
 static const float epsilon = 0.001;
@@ -430,7 +433,9 @@ float density(int3 p)
     float d = distance(worldPos, planetCenter);
     float noise = lerp(-1, 1, saturate(d / (planetRadius * 2)));
     float3 pp = worldPos + noisePosition;
-    float den = Density[p + int3(1,1,1) * 1000/2];
+
+    float3 densitySample = p + int3(1, 1, 1) * 1000 / 2;
+    float den = Density[densityGridSize * densityGridSize * densitySample.z + densityGridSize * densitySample.y + densitySample.x];
     //return noise + ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * surfaceNoiseImpact;
     //return noise + ridgedNoise(normalize(pp * _Scale)) * _Impact;
     return noise + den;
@@ -873,7 +878,8 @@ void CSMain(uint2 id : SV_DispatchThreadID)
             terraform(res.mapPos, id, width, height);
         }
 
-        Destination[id.xy] = res.mapPos;
+        //Destination[id.xy] = res.mapPos;
+        VoxelIntersections[width * id.x + id.y] = res.mapPos;
         //AddTriangles(res.triangles);
         /*int r = 1;
         for (int x = -r; x <= r; x++)
