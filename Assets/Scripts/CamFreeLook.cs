@@ -31,13 +31,13 @@ public class CamFreeLook : MonoBehaviour
         pitch += mouseDelta.y;
         yaw += mouseDelta.x;
         mousePos = Input.mousePosition;
-        transform.rotation = Quaternion.Euler(pitch, yaw, 0);
+        transform.rotation = Quaternion.Euler(-pitch, yaw, 0);
 
         // Move
         velocity = transform.forward * Input.GetAxis("Vertical") + transform.right * Input.GetAxis("Horizontal");
         velocity *= moveSpeed;
         //transform.Translate(velocity * Time.deltaTime);
         transform.position += transform.forward * moveSpeed * Time.deltaTime * Input.GetAxis("Vertical") + 
-                               -transform.right * moveSpeed * Time.deltaTime * Input.GetAxis("Horizontal");
+                               transform.right * moveSpeed * Time.deltaTime * Input.GetAxis("Horizontal");
     }
 }

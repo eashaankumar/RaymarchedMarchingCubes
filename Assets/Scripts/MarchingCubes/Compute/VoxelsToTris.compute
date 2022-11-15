@@ -1,62 +1,7 @@
 #pragma kernel CSMain
-#pragma kernel DensityKernel
 
 #include "Noise.compute"
 
-
-RWTexture2D<float4> Destination;
-RWTexture3D<float> Density;
-
-RWStructuredBuffer<uint> voxels;
-
-RWStructuredBuffer<int3> mapPosCenter; // tracks id of voxel looked at by center pixel
-
-float4x4 _CameraToWorld;
-float4x4 _CameraInverseProjection;
-float3 _LightDirection; // must be normalized!
-// colors
-float3 _AmbientColor;
-float3 _GrassColor;
-float3 _SandColor;
-float3 _WaterColorShallow;
-float3 _WaterColorDeep;
-float3 _DirtColor;
-float _Scale;
-float _Impact;
-float _Octaves;
-float3 noisePosition = float3(0,0,0);
-int _Terraforming;
-float _BrushStrength;
-int _BrushSize;
-float _WaveBreakDepth;
-float _Time;
-float _SpecularStrength;
-float3 _SunColor;
-
-// rendering
-bool _RenderOdds;
-
-// atmosphere
-float _AtmosphereRadius;
-float _OceanRadius;
-float _AtmosphereDensityFalloff;
-int _OpticalDepthSteps;
-int _AtmosphereSteps;
-float3 _ScatterCoefficients = float3(700, 530, 440);
-
-static const float PI = 3.1415925;
-
-static const float epsilon = 0.001;
-static const int MAX_RAY_VOX_TRAVERSE_COUNT = 500;
-static const int MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT = 50;
-
-//float planetRadius = 100; // make sure they are synced!
-static const float3 planetCenter = float3(0,0,0);
-float planetRadius = 250;
-
-static const int numThreads = 8;
-
-////////////////////////////////////////// MARCHING CUBES ///////////////////////////////////////////////
 struct Vertex {
     float3 position;
     float3 normal;
@@ -66,8 +11,51 @@ struct Triangle {
     Vertex vertexC;
     Vertex vertexB;
     Vertex vertexA;
+    int3 mapPos;
 };
 
+uint width;
+uint height;
+RWStructuredBuffer<float> Density;
+RWTexture2D<int3> Destination;
+
+AppendStructuredBuffer<Triangle> Triangles;
+RWStructuredBuffer<int3> mapPosCenter; // tracks id of voxel looked at by center pixel
+RWStructuredBuffer<int3> VoxelIntersections;
+
+float4x4 _CameraToWorld;
+float4x4 _CameraInverseProjection;
+float3 _LightDirection; // must be normalized!
+// colors
+float3 _AmbientColor;
+float3 _GrassColor;
+float3 _SandColor;
+float3 _WaterColor;
+float3 _DirtColor;
+float _Scale;
+float _Impact;
+float3 noisePosition = float3(0,0,0);
+int _Terraforming;
+float _BrushStrength;
+int _BrushSize;
+
+// rendering
+bool _RenderOdds;
+
+float densityGridSize;
+
+
+static const float epsilon = 0.001;
+static const int MAX_RAY_VOX_TRAVERSE_COUNT = 250;
+static const int MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT = 50;
+
+//float planetRadius = 100; // make sure they are synced!
+static const float3 planetCenter = float3(0,0,0);
+static const float planetRadius = 100;
+
+static const int numThreads = 8;
+
+////////////////////////////////////////// MARCHING CUBES ///////////////////////////////////////////////
 static const float3 directions[16] = {
     float3(1, 1, 0),
     float3(-1, 1, 0),
@@ -421,15 +409,9 @@ float ridgedNoise(float3 p)
     return 1.0f - noise;
 }
 
-float ridgedNoiseWave(float3 p)
-{
-    float3 noise = abs(snoise(normalize(p) + _Time/200 * _Scale) * _Impact);
-    return 1.0f - noise;
-}
-
 float ridgedNoise2(float3 p, int octaves, int lacunarity, int gain)
 {
-    float noise = 1 - abs(snoise(p));
+    float noise = snoise(p);
     for (int i = 1; i < octaves; i++)
     {
         noise += snoise(p * lacunarity * i) / (gain * i);
@@ -437,12 +419,6 @@ float ridgedNoise2(float3 p, int octaves, int lacunarity, int gain)
     return noise;
 }
 
-float getPlanetNoise(int3 p)
-{
-    float3 worldPos = p;
-    float d = distance(worldPos, planetCenter);
-    return lerp(-1, 1, saturate(d / (planetRadius * 2)));
-}
 
 float density(int3 p)
 {
@@ -452,18 +428,17 @@ float density(int3 p)
     float3 pp = p + noisePosition;
     float noise = lerpF(-1.0, 1.0, d / (planetRadius * 2));
     return noise + (ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * 2 - 1) * surfaceNoiseImpact;*/
-    float noise = getPlanetNoise(p);
-    float den = Density[p + int3(1,1,1) * 1000/2];
+
+    float3 worldPos = p;
+    float d = distance(worldPos, planetCenter);
+    float noise = lerp(-1, 1, saturate(d / (planetRadius * 2)));
+    float3 pp = worldPos + noisePosition;
+
+    float3 densitySample = p + int3(1, 1, 1) * 1000 / 2;
+    float den = Density[densityGridSize * densityGridSize * densitySample.z + densityGridSize * densitySample.y + densitySample.x];
     //return noise + ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * surfaceNoiseImpact;
     //return noise + ridgedNoise(normalize(pp * _Scale)) * _Impact;
     return noise + den;
-}
-
-float getNoise(int3 p)
-{
-    float3 worldPos = p;
-    float3 pp = worldPos + noisePosition;
-    return ridgedNoise2(pp * _Scale, _Octaves, 2.0, 2.0) * _Impact;
 }
 
 
@@ -559,6 +534,17 @@ VoxelTris generateTriangle(int3 id)
     int numTris = caseToNumPolys[caseByte];
     VoxelTris vTris;
     vTris.numTris = numTris;
+    // init data
+    Triangle temp;
+    Vertex tempV;
+    tempV.position = float3(0, 0, 0);
+    tempV.normal = float3(0, 0, 0);
+    temp.vertexC = tempV;
+    temp.vertexB = tempV;
+    temp.vertexA = tempV;
+    temp.mapPos = id;
+    vTris.triangles[0] = vTris.triangles[1] = vTris.triangles[2] = vTris.triangles[3] = vTris.triangles[4] = vTris.triangles[5] = temp;
+    // find tris
     for (int t = 0; t < numTris; t++)
     {
         int edgesOfTri[3] = fromVec2ECL(caseByte, t);
@@ -652,6 +638,7 @@ float3 getColorAtVoxel(float3 p)
 {
     //float3 p = float3(mapPos)+float3(1, 1, 1) * 0.5;
     float planetHeight = distance(p, planetCenter) - planetRadius - epsilon;
+    if (planetHeight < 0) return _WaterColor;
     if (planetHeight < sandHeight) return _SandColor;
     if (planetHeight < 10) return _DirtColor;
     if (planetHeight < 15) return _GrassColor;
@@ -713,37 +700,6 @@ struct CheckRayHitsTriangle
     float d;
 };
 
-// steps through solid voxel and detects hit with triangle
-// start: worldPos of ray entry into voxel
-// end: worldPos of ray exit out of voxel
-CheckRayHitsTriangle hitsSurface(int3 mapPos, float3 start, float3 dir, float3 end)
-{
-    CheckRayHitsTriangle hits;
-    VoxelTris triangles = generateTriangle(mapPos);
-    if (triangles.numTris == 0)
-    {
-        hits.hits = false;
-        return hits;
-    }
-    float maxDst = distance(start, end) - epsilon;
-    float d = 0 + epsilon;
-    while (d < maxDst)
-    {
-        float3 p = start + dir * d;
-        SDFTriRes res = sdfTris(triangles, p, mapPos);
-        if (res.sdf < epsilon)
-        {
-            hits.hits = true;
-            hits.tri = triangles.triangles[res.triI];
-            hits.d = d + res.sdf;
-            return hits;
-        }
-        d += res.sdf;
-    }
-    hits.hits = false;
-    return hits;
-}
-
 float3 getVoxelExitOffset(float3 sideDist, float3 deltaDist)
 {
     if (sideDist.x < sideDist.y) {
@@ -783,7 +739,6 @@ void terraform(int3 mapPos, int2 id, int width, int height)
                 for (int z = -_BrushSize; z <= _BrushSize; z++)
                 {
                     int3 offset = int3(x, y, z);
-                    if (length(offset + float3(1, 1, 1) / 2) > _BrushSize) continue;
                     float dis = length(offset);
                     Density[mapPos + offset + int3(1, 1, 1) * 1000 / 2] += _BrushStrength * exp(-dis / _BrushSize) * _Terraforming;
                 }
@@ -811,16 +766,13 @@ void terraform(int3 mapPos, int2 id, int width, int height)
     }*/
 }
 
-struct RaymarchDDAResult
+struct RaymarchResult
 {
     int3 mapPos;
-    bool miss;
-    float pathLength; // distance to solid voxel entry face (of the cube representing the voxel, not the triangles)
-    Triangle t;
-    float voxelD; // how far the ray travels inside solid voxel before hitting a triangle
+    VoxelTris triangles;
 };
 
-RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
+RaymarchResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
 {
     // https://www.shadertoy.com/view/4dX3zl
     float3 p = o;
@@ -834,11 +786,13 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     bool3 mask;
     bool miss = false;
     float pathLength = 0;
-    CheckRayHitsTriangle hits;
+    RaymarchResult res;
     for (int i = 0; i < maxStepCount; i++) {
-        hits = hitsSurface(mapPos, o + dir * pathLength, dir, o + getVoxelExitOffset(sideDist, deltaDist));
-        if (hits.hits) 
+        //hits = hitsSurface(mapPos, o + dir * pathLength, dir, o + getVoxelExitOffset(sideDist, deltaDist));
+        VoxelTris triangles = generateTriangle(mapPos);
+        if (triangles.numTris > 0)
         {
+            res.triangles = triangles;
             break;
         }
         if (sideDist.x < sideDist.y) {
@@ -874,256 +828,22 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
             miss = true;
         }
     }
-
-    RaymarchDDAResult result;
-    result.mapPos = mapPos;
-    result.miss = miss;
-    result.pathLength = pathLength;
-    //result.normal = normalize(hits.tri.vertexA.normal + hits.tri.vertexB.normal + hits.tri.vertexC.normal);
-    result.t = hits.tri;
-    result.voxelD = hits.d;
-
-    return result;
+    res.mapPos = mapPos;
+    return res;
 }
 
-bool isShadow(Ray camRay, float3 normal, float3 hitPoint)
+void AddTriangles(VoxelTris triangles)
 {
-    //float3 shadowRayDir = normalize(reflect(-camRay.direction, normal));
-    float3 shadowRayDir = -_LightDirection;
-    float3 o = hitPoint - camRay.direction * epsilon * 100;
-    RaymarchDDAResult shadowResult = raymarchDDA(o + shadowRayDir * (epsilon * 2), shadowRayDir, MAX_SHADOW_RAY_VOX_TRAVERSE_COUNT);
-    return !shadowResult.miss;
-}
-
-static const float maxFloat = 3.402823466e+38;
-
-// https://github.com/SebLague/Solar-System/blob/Development/Assets/Scripts/Celestial/Shaders/Includes/Math.cginc
-float2 raySphere(float3 sphereCentre, float sphereRadius, float3 rayOrigin, float3 rayDir) {
-    float3 offset = rayOrigin - sphereCentre;
-    float a = 1; // Set to dot(rayDir, rayDir) if rayDir might not be normalized
-    float b = 2 * dot(offset, rayDir);
-    float c = dot(offset, offset) - sphereRadius * sphereRadius;
-    float d = b * b - 4 * a * c; // Discriminant from quadratic formula
-
-    // Number of intersections: 0 when d < 0; 1 when d = 0; 2 when d > 0
-    if (d > 0) {
-        float s = sqrt(d);
-        float dstToSphereNear = max(0, (-b - s) / (2 * a));
-        float dstToSphereFar = (-b + s) / (2 * a);
-
-        // Ignore intersections that occur behind the ray
-        if (dstToSphereFar >= 0) {
-            return float2(dstToSphereNear, dstToSphereFar - dstToSphereNear);
-        }
-    }
-    // Ray did not intersect sphere
-
-    return float2(maxFloat, 0);
-}
-
-float densityAtPoint(float3 densitySamplePoint)
-{
-    float heightAboveSurface = length(densitySamplePoint - planetCenter) - _OceanRadius;
-    float height01 = heightAboveSurface / (_AtmosphereRadius - _OceanRadius);
-    return exp(-height01 * _AtmosphereDensityFalloff) * (1 - height01);
-}
-
-float opticalDepth(float3 rayOrigin, float3 rayDir, float rayLength)
-{
-    float3 densitySamplePoint = rayOrigin;
-    float stepsize = rayLength / (_OpticalDepthSteps - 1);
-    float opticalDepth = 0;
-    for (int i = 0; i < _OpticalDepthSteps; i++)
+    for (int i = 0; i < triangles.numTris; i++)
     {
-        float localDensity = densityAtPoint(densitySamplePoint);
-        opticalDepth += localDensity * stepsize;
-        densitySamplePoint += rayDir * stepsize;
+        Triangles.Append(triangles.triangles[i]);
     }
-    return opticalDepth;
-}
-
-float3 calculateLight(float3 rayOrigin, float3 rayDir, float3 rayLength, float3 originalCol)
-{
-    float3 inScatterPoint = rayOrigin;
-    float stepSize = rayLength / (_AtmosphereSteps - 1);
-    float3 inScatterLight = 0;
-    float viewRayOpticalDepth = 0;
-
-    for (int i = 0; i < _AtmosphereSteps; i++)
-    {
-        float sunRayLength = raySphere(planetCenter, _AtmosphereRadius, inScatterPoint, -_LightDirection).y;
-        float sunRayOpticalDepth = opticalDepth(inScatterPoint, -_LightDirection, sunRayLength);
-        viewRayOpticalDepth = opticalDepth(inScatterPoint, -rayDir, stepSize * i);
-        float3 transmittance = exp(-(sunRayOpticalDepth + viewRayOpticalDepth) * _ScatterCoefficients);
-        float localDensity = densityAtPoint(inScatterPoint);
-        inScatterLight += localDensity * transmittance * _ScatterCoefficients * stepSize;
-        inScatterPoint += rayDir * stepSize;
-    }
-    float originalColTransmittance = exp(-viewRayOpticalDepth);
-    return (originalCol * originalColTransmittance) + inScatterLight * float3(1.1,1.1,1.1) + originalCol;
-}
-
-float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
-{
-    float3 color = float3(0, 0, 0);
-    float3 surfaceColor = float3(0, 0, 0);
-    float3 voxelColor = float3(0, 0, 0);
-    float3 diffuseColor = float3(0, 0, 0);
-    float disToSurface = 0;
-    float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
-    if (!res.miss) {
-        float3 normal = calculateNormal(res.mapPos);
-        disToSurface = res.pathLength + res.voxelD;
-        float diff = dot(normal, -_LightDirection);
-        float diffIntensity = 1;
-        voxelColor = getColorAtVoxel(hitPoint);
-        float3 diffuse = float3(1, 1, 1) * diffIntensity;
-        diffuseColor = saturate(diff * diffuse);
-
-        float fogAmt = pow(exp(-1 / res.pathLength), 10);
-        float3 fog = fogAmt * float3(1, 1, 1);
-
-        // shadow
-        float3 shadowColor = float3(1, 1, 1);
-        bool shadow = isShadow(camRay, normal, hitPoint);
-        if (shadow) shadowColor *= 0.5;
-
-        surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;
-        
-
-        //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
-        /*if (isVoxelInBrushRadius(res.mapPos))
-        {
-            float brushdis = distance(res.mapPos, mapPosCenter[0]);
-            color = color + float3(1, 0, 0) * (1 - brushdis / _BrushSize);
-        }*/
-
-        //color = float3(1, 1, 1);
-        //color = float3(1, 1, 1);
-        // depth blur
-        //color *= (1 - d / maxStepCount * 1.75);
-        //color = normal * 0.5 + 0.5;
-    }
-
-    color = surfaceColor;
-
-    // ocean
-    float waveNoise = ridgedNoiseWave(hitPoint);
-    float2 oceanRaySphere = raySphere(planetCenter, _OceanRadius, camRay.origin, camRay.direction);
-    float3 oceanColor = float3(0, 0, 0);
-    float disToWaterSurface = oceanRaySphere.x;
-    float disThroughOcean = 0;
-    float oceanNormalNoise = waveNoise * 10;
-    float3 oceanNormal = hitPoint - planetCenter;
-    if (oceanRaySphere.y > 0 && disToWaterSurface < MAX_RAY_VOX_TRAVERSE_COUNT/2)
-    {
-        // Ocean not in path of ray
-
-        if (res.miss)
-        {
-            disThroughOcean = oceanRaySphere.y / (_OceanRadius * 2);
-            oceanNormal = normalize(oceanNormal + oceanNormalNoise * exp(1/ disThroughOcean));
-
-            oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disThroughOcean);
-            oceanColor = saturate(oceanColor);
-            color = oceanColor;
-        }
-        else if (disToWaterSurface < disToSurface)
-        {
-            // Ocean visible
-            disThroughOcean = disToSurface - disToWaterSurface;
-            oceanNormal = normalize(oceanNormal + oceanNormalNoise * exp(1 / disThroughOcean));
-
-
-            float disT = 1 - disToWaterSurface / disToSurface;
-            oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disT);
-            // wavebreak
-            /*if (disThroughOcean <= _WaveBreakDepth)
-            {
-                oceanColor = float3(1, 1, 1);
-                color = saturate(oceanColor * 1 / disThroughOcean);
-            }
-            else*/
-            {
-                // diffuse
-                float diff = max(dot(oceanNormal, -_LightDirection), 0.0);
-                float3 diffuse = diff * _SunColor;
-                // specular
-                float3 reflectDir = reflect(-_LightDirection, oceanNormal);
-                float spec = pow(max(dot(camRay.direction, reflectDir), 0.0), 32);
-                float3 specular = _SpecularStrength * spec * _SunColor;
-                //oceanColor *= waveNoise;
-                oceanColor = saturate((float3(1, 1, 1) * 0.25 + diffuse + specular) * oceanColor);
-                //surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;
-                color = lerp(oceanColor, surfaceColor, saturate(1 / disThroughOcean));
-            }
-        }
-    }
-    
-    // atmoshpere
-    float2 atmosphereSphere = raySphere(planetCenter, _AtmosphereRadius, camRay.origin, camRay.direction);
-    float dstToAtmosphere = atmosphereSphere.x;
-    float dstThroughAtmosphere = disToSurface - dstToAtmosphere;
-    if (res.miss) dstThroughAtmosphere = atmosphereSphere.y;
-    if (dstThroughAtmosphere > 0)
-    {
-        const float atmos_epsilon = 0.0001;
-        float3 pointInAtmosphere = camRay.origin + camRay.direction * (dstToAtmosphere + atmos_epsilon);
-        color = calculateLight(pointInAtmosphere, camRay.direction, dstThroughAtmosphere - atmos_epsilon * 2, color);
-    }
-
-    return color;
-}
-
-float3 raymarchTri(Ray ray)
-{
-    float d = 0;
-    float maxDst = 1000;
-    bool hit = false;
-    while (d < maxDst)
-    {
-        float3 p = ray.origin + ray.direction * d;
-        float sdf = udTriangle(float3(0,0,0), float3(10,0,0), float3(0,10,0), p);
-        //float sdf = sdSphere(p, 30, planetCenter);
-        if (sdf < epsilon)
-        {
-            hit = true;
-            break;
-        }
-        d += sdf;
-    }
-    if (!hit) return float3(0, 0, 0);
-    return normalize(d/maxDst) * 0.5 + 0.5;
-}
-
-float gaussian(int2 p, float std)
-{
-    return 1 / (2 * PI * std * std) * exp(-(p.x * p.x + p.y * p.y) / (2 * std * std));
-}
-
-void blur(uint2 id, uint width, uint height)
-{
-    float4 result = float4(0,0,0,0);
-    int blurRadius = 0;
-    int count = 0;
-    for (int x = -blurRadius; x <= blurRadius; x++)
-    {
-        for (int y = -blurRadius; y <= blurRadius; y++)
-        {
-            int2 offset = id.xy + int2(x, y);
-            if (offset.x < 0 || offset.y < 0 || offset.x >= width || offset.y >= height) continue;
-            float d = distance(id.xy, offset.xy);
-            result += Destination[id.xy + int2(x, y)] * gaussian(int2(x, y), 1);
-            count++;
-        }
-    }
-    //Destination[id.xy] = result;
 }
 
 bool shouldRayMarch(uint2 id, uint width, uint height)
 {
     if (id.x == width / 2 && id.y == height / 2) return true;
-    float off = distance(int2(width/2, height/2), id.xy);
+    float off = distance(int2(width / 2, height / 2), id.xy);
     if (off <= _BrushSize) return true;
     bool odds = (_RenderOdds && !(id.x % 2 == 0 && id.y % 2 == 0));
     bool evens = (!_RenderOdds && (id.x % 2 == 0 && id.y % 2 == 0));
@@ -1133,44 +853,45 @@ bool shouldRayMarch(uint2 id, uint width, uint height)
 [numthreads(numThreads, numThreads, 1)]
 void CSMain(uint2 id : SV_DispatchThreadID)
 {
-    uint width, height;
-    Destination.GetDimensions(width, height);
+    //uint width, height;
+    //Destination.GetDimensions(width, height);
+
+    //if (!(id.x % 10 == 0 && id.y % 10 == 0)) return;
 
     if (shouldRayMarch(id, width, height))
     {
         float2 uv = id.xy / float2(width, height);
-        uv += float2(sin(_Time) / width, cos(_Time) / height) * 0.01;
-
-        // Background gradient
-
         // Raymarching:
         Ray ray = CreateCameraRay(uv * 2 - 1);
 
         float4 result = float4(ray.direction * 0.5 + 0.5, 0);
 
-        RaymarchDDAResult res = raymarchDDA(ray.origin, ray.direction, MAX_RAY_VOX_TRAVERSE_COUNT);
+        RaymarchResult res = raymarchDDA(ray.origin, ray.direction, MAX_RAY_VOX_TRAVERSE_COUNT);
 
         if (id.x == width / 2 && id.y == height / 2)
         {
             mapPosCenter[0] = res.mapPos;
         }
 
-        result.xyz = GetColorAtRaymarchResult(res, ray);
-
-        //result.xyz = raymarchTri(ray);
-
-        Destination[id.xy] = result;
-        blur(id, width, height);
-
         if (_Terraforming != 0)
         {
             terraform(res.mapPos, id, width, height);
         }
-    }
-}
 
-[numthreads(numThreads, numThreads, numThreads)]
-void DensityKernel(uint3 id : SV_DispatchThreadID)
-{
-    Density[id.xyz] = getNoise(id);
+        //Destination[id.xy] = res.mapPos;
+        VoxelIntersections[width * id.x + id.y] = res.mapPos;
+        //AddTriangles(res.triangles);
+        /*int r = 1;
+        for (int x = -r; x <= r; x++)
+        {
+            for (int y = -r; y <= r; y++)
+            {
+                for (int z = -r; z <= r; z++)
+                {
+                    if (x == 0 && y == 0 && z == 0) continue;
+                    AddTriangles(generateTriangle(res.mapPos + int3(x, y, z)));
+                }
+            }
+        }*/
+    }
 }

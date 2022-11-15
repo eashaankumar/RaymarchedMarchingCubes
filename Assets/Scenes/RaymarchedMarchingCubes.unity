@@ -310,6 +310,7 @@ RectTransform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1301577539}
+  - {fileID: 1243560179}
   m_Father: {fileID: 0}
   m_RootOrder: 2
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -398,7 +399,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 534669902}
   m_LocalRotation: {x: 0, y: -0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 200, y: 0, z: 0}
+  m_LocalPosition: {x: 500, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -452,15 +453,30 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c7bcc638254a40a4ab76be09cb7fadff, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  scale: 0.52
-  impact: 0.2
+  scale: 0.005
+  impact: 0.05
+  octaves: 6
+  planetRadiusOffset: 0
   ambientColor: {r: 0.2, g: 0.2, b: 0.2, a: 0}
   grassColor: {r: 0, g: 1, b: 0.11764706, a: 0}
   dirtColor: {r: 0.7058824, g: 0.24313726, b: 0, a: 0}
   sandColor: {r: 1, g: 0.6, b: 0, a: 0}
-  waterColor: {r: 0, g: 0.47058824, b: 1, a: 0}
-  brushStrength: 0.001
+  waterColorShallow: {r: 0, g: 0.56397367, b: 1, a: 0}
+  waterColorDeep: {r: 0, g: 0.15508296, b: 0.5471698, a: 0}
+  brushStrength: 0.005
   brushSize: 5
+  planetRadius: 300
+  oceanRadius: 290
+  waveBreakDepth: 0.74
+  atmosphereRadius: 350
+  atmosphereDensityFallOff: 3.62
+  opticalDepthSteps: 5
+  atmosphereSteps: 5
+  wavelengths: {x: 700, y: 530, z: 440}
+  scatteringStrength: 0.2
+  specularStrength: 0.31
+  renderTicks: 1
+  resolution: 0.572
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!1 &703060098
 GameObject:
@@ -529,6 +545,82 @@ Transform:
   m_Father: {fileID: 0}
   m_RootOrder: 3
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1243560178
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1243560179}
+  - component: {fileID: 1243560181}
+  - component: {fileID: 1243560180}
+  m_Layer: 5
+  m_Name: Crosshair
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1243560179
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1243560178}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 522033030}
+  m_RootOrder: 1
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 20, y: 20}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1243560180
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1243560178}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 446260664, guid: 4589deb543868ce4a9be148e78b3b0da, type: 3}
+  m_Type: 0
+  m_PreserveAspect: 1
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &1243560181
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1243560178}
+  m_CullTransparentMesh: 1
 --- !u!1 &1301577538
 GameObject:
   m_ObjectHideFlags: 0
@@ -615,7 +707,7 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 30.1
+  m_fontSize: 44.95
   m_fontSizeBase: 36
   m_fontWeight: 400
   m_enableAutoSizing: 1
