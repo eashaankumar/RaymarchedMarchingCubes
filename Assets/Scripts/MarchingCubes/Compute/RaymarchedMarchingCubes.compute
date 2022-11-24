@@ -6,6 +6,8 @@
 
 RWTexture2D<float4> Destination;
 RWTexture3D<float> Density;
+Texture2D<float4> SandTexture; SamplerState samplerSandTexture;
+Texture2D<float4> WaterTexture; SamplerState samplerWaterTexture;
 
 RWStructuredBuffer<uint> voxels;
 
@@ -1005,6 +1007,26 @@ float3 barycentricCoords(Triangle t, float3 P)
     return float3(baryA, baryB, baryC);
 }
 
+float2 sphericalToUV(float3 p)
+{
+    // http://raytracerchallenge.com/bonus/texture-mapping.html
+    float theta = atan2(p.x, p.z);
+    float3 vec = p - planetCenter;
+    float radius = length(vec);
+    float phi = acos(p.y / radius);
+    float raw_u = theta / (2 * PI);
+    float u = 1 - (raw_u + 0.5);
+    float v = 1 - phi / PI;
+    return float2(u, v);
+}
+
+float sandNoise(float3 p)
+{
+    float grainySandNoise = max((ridgedNoise2(p * 10, 3, 2, 1.5)) * 0.5 + 0.5, 0.99);
+    //float wavySandNoise = max(( sin((hitPoint.x+hitPoint.y+hitPoint.z) * 10) + ridgedNoise(hitPoint * 2)) * 0.5 + 0.5, 0.1);
+    return grainySandNoise;
+}
+
 float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 {
     float3 color = float3(0, 0, 0);
@@ -1022,11 +1044,30 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         float3 normal = calculateNormal(res.mapPos);
         // if smooth shading
         normal = normalize(t.vertexA.normal * triCoords.x + t.vertexB.normal * triCoords.y + t.vertexC.normal * triCoords.z);
-        
+
+        // material
+        float sandNoiseDisappearingFallOff = 0.5; // higher = sooner it disappears
+        float sandNois = lerp(1, sandNoise(hitPoint), exp(0.1 * -abs(res.pathLength)) );
+        //float sandFadeOutDis = 10;
+        //if (res.pathLength < sandFadeOutDis)
+        { // ignore if camera is too far away
+            //float2 off = float2(0.01, 0);
+            //float3 sandNorm = normalize(float3(sandNoise(hitPoint + off.xyy) - sandNoise(hitPoint - off.xyy),
+            //    sandNoise(hitPoint + off.yxy) - sandNoise(hitPoint - off.yxy),
+            //    sandNoise(hitPoint + off.yyx) - sandNoise(hitPoint - off.yyx)));
+
+            //normal = normalize(normal + sandNorm);
+        }
+
         disToSurface = res.pathLength + res.voxelD;
         float diff = dot(normal, -_LightDirection);
         float diffIntensity = 1;
-        voxelColor = getColorAtVoxel(hitPoint);
+        //voxelColor = getColorAtVoxel(hitPoint);
+
+        //voxelColor = SandTexture.SampleLevel(samplerSandTexture, triCoords.xy, 0);
+        
+        voxelColor = (sandNois) * _SandColor;
+
         float3 diffuse = float3(1, 1, 1) * diffIntensity;
         diffuseColor = saturate(diff * diffuse);
 
@@ -1084,9 +1125,16 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
             disThroughOcean = disToSurface - disToWaterSurface;
             oceanNormal = normalize(oceanNormal + oceanNormalNoise * exp(1 / disThroughOcean));
 
-
             float disT = 1 - disToWaterSurface / disToSurface;
-            oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disT);
+            //if (disToWaterSurface > 0)
+            {
+                //float2 uv = sphericalToUV(hitPoint) * 100;
+                //oceanColor = WaterTexture.SampleLevel(samplerWaterTexture, uv, 0);
+            }
+            //else 
+            {
+                oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disT);
+            }
             // wavebreak
             //if (disThroughOcean <= _WaveBreakDepth)
             //{

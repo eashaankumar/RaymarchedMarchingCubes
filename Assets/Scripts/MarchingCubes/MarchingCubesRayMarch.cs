@@ -15,6 +15,10 @@ public class MarchingCubesRayMarch : MonoBehaviour
     float planetRadiusOffset;
     [Header("Generator settings")]
     [SerializeField]
+    Texture2D sandTexture;
+    [SerializeField]
+    Texture2D waterTexture;
+    [SerializeField]
     Color ambientColor;
     [SerializeField]
     Color grassColor;
@@ -146,6 +150,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
         brushStrength = Mathf.Abs(brushStrength);
         voxelShader.SetTexture(kernelIndex, "Destination", target);
         voxelShader.SetTexture(kernelIndex, "Density", density);
+        voxelShader.SetTexture(kernelIndex, "SandTexture", sandTexture);
+        voxelShader.SetTexture(kernelIndex, "WaterTexture", waterTexture);
         voxelShader.SetMatrix("_CameraToWorld", cam.cameraToWorldMatrix);
         voxelShader.SetMatrix("_CameraInverseProjection", cam.projectionMatrix.inverse);
         voxelShader.SetVector("_LightDirection", sun.transform.forward);

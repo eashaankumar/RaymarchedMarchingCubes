@@ -457,14 +457,16 @@ MonoBehaviour:
   impact: 0.05
   octaves: 6
   planetRadiusOffset: 0
+  sandTexture: {fileID: 2800000, guid: 9d7cdcd8a4759a74c96ac675fdbccce9, type: 3}
+  waterTexture: {fileID: 2800000, guid: e7dbbe097a909494bb1fac344b132ca9, type: 3}
   ambientColor: {r: 0.2, g: 0.2, b: 0.2, a: 0}
   grassColor: {r: 0, g: 1, b: 0.11764706, a: 0}
   dirtColor: {r: 0.7058824, g: 0.24313726, b: 0, a: 0}
-  sandColor: {r: 1, g: 0.6, b: 0, a: 0}
+  sandColor: {r: 0.9058824, g: 0.75294125, b: 0.5647059, a: 0}
   waterColorShallow: {r: 0, g: 0.56397367, b: 1, a: 0}
   waterColorDeep: {r: 0, g: 0.15508296, b: 0.5471698, a: 0}
-  brushStrength: 0.005
-  brushSize: 5
+  brushStrength: 0.001
+  brushSize: 2
   planetRadius: 300
   oceanRadius: 290
   waveBreakDepth: 0.74
@@ -476,7 +478,7 @@ MonoBehaviour:
   scatteringStrength: 0.2
   specularStrength: 0.31
   renderTicks: 1
-  resolution: 1
+  resolution: 0.522
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!1 &703060098
 GameObject:
@@ -707,7 +709,7 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 44.95
+  m_fontSize: 45.2
   m_fontSizeBase: 36
   m_fontWeight: 400
   m_enableAutoSizing: 1
