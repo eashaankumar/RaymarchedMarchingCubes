@@ -559,6 +559,15 @@ VoxelTris generateTriangle(int3 id)
     int numTris = caseToNumPolys[caseByte];
     VoxelTris vTris;
     vTris.numTris = numTris;
+    // Dummy
+    Triangle dummy;
+    Vertex dummyV;
+    dummyV.position = float3(0, 0, 0);
+    dummyV.normal = float3(0, 0, 0);
+    dummy.vertexA = dummyV;
+    dummy.vertexB = dummyV;
+    dummy.vertexC = dummyV;
+    vTris.triangles[0] = vTris.triangles[1] = vTris.triangles[2] = vTris.triangles[3] = vTris.triangles[4] = vTris.triangles[5] = dummy;
     for (int t = 0; t < numTris; t++)
     {
         int edgesOfTri[3] = fromVec2ECL(caseByte, t);
@@ -574,7 +583,7 @@ VoxelTris generateTriangle(int3 id)
         //triangles.Append(tri);
         vTris.triangles[t] = tri;
     }
-    return vTris;
+    return vTris; 
 }
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -666,7 +675,7 @@ struct SDFTriRes
     int triI;
 };
 
-SDFTriRes sdfTris(VoxelTris tris, float3 p, int3 mapPos)
+SDFTriRes sdfTris(VoxelTris tris, float3 p)
 {
     SDFTriRes res;
     res.triI = 0;
@@ -709,7 +718,7 @@ SDFTriRes sdfTris(VoxelTris tris, float3 p, int3 mapPos)
 struct CheckRayHitsTriangle
 {
     bool hits;
-    Triangle tri;
+    int triIndex;
     float d;
 };
 
@@ -730,15 +739,15 @@ CheckRayHitsTriangle hitsSurface(int3 mapPos, float3 start, float3 dir, float3 e
     while (d < maxDst)
     {
         float3 p = start + dir * d;
-        SDFTriRes res = sdfTris(triangles, p, mapPos);
+        SDFTriRes res = sdfTris(triangles, p);
+        d += res.sdf;
         if (res.sdf < epsilon)
         {
             hits.hits = true;
-            hits.tri = triangles.triangles[res.triI];
-            hits.d = d + res.sdf;
+            hits.triIndex = res.triI;
+            hits.d = d;
             return hits;
         }
-        d += res.sdf;
     }
     hits.hits = false;
     return hits;
@@ -816,7 +825,7 @@ struct RaymarchDDAResult
     int3 mapPos;
     bool miss;
     float pathLength; // distance to solid voxel entry face (of the cube representing the voxel, not the triangles)
-    Triangle t;
+    int triIndex;
     float voxelD; // how far the ray travels inside solid voxel before hitting a triangle
 };
 
@@ -880,7 +889,7 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     result.miss = miss;
     result.pathLength = pathLength;
     //result.normal = normalize(hits.tri.vertexA.normal + hits.tri.vertexB.normal + hits.tri.vertexC.normal);
-    result.t = hits.tri;
+    result.triIndex = hits.triIndex;
     result.voxelD = hits.d;
 
     return result;
@@ -963,6 +972,39 @@ float3 calculateLight(float3 rayOrigin, float3 rayDir, float3 rayLength, float3 
     return (originalCol * originalColTransmittance) + inScatterLight * float3(1.1,1.1,1.1) + originalCol;
 }
 
+/*int findMatchingTriangleIndex(Triangle t, Triangle tris[6], int numTris)
+{
+    if (numTris == 0 || numTris >= 6) return -1;
+    int minI = 0;
+    float minDot = 10000;
+    for (int i = 0; i < numTris; i++)
+    {
+        float vertexADot = abs(dot(t.vertexA.position, tris[i].vertexA.position));
+        float vertexBDot = abs(dot(t.vertexB.position, tris[i].vertexB.position));
+        float vertexCDot = abs(dot(t.vertexC.position, tris[i].vertexC.position));
+        float currDot = vertexADot + vertexBDot + vertexCDot;
+        if (currDot < minDot)
+        {
+            minDot = currDot;
+            minI = i;
+        }
+    }
+
+    return minI;
+}*/
+
+float3 barycentricCoords(Triangle t, float3 P)
+{
+    float3 A = t.vertexA.position;
+    float3 B = t.vertexB.position;
+    float3 C = t.vertexC.position;
+
+    float baryA = ((B.y - C.y) * (P.x - C.x) + (C.x - B.x)*(P.y - C.y)) / ((B.y - C.y)*(A.x - C.x) + (C.x - B.x)*(A.y-C.y));
+    float baryB = ((C.y - A.y) * (P.x - C.x) + (A.x - C.x)*(P.y-C.y)) / ((B.y-C.y)*(A.x-C.x) + (C.x-B.x)*(A.y-C.y));
+    float baryC = 1 - baryA - baryB;
+    return float3(baryA, baryB, baryC);
+}
+
 float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 {
     float3 color = float3(0, 0, 0);
@@ -973,7 +1015,21 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
     if (!res.miss) {
         float3 normal = calculateNormal(res.mapPos);
-        disToSurface = res.pathLength + res.voxelD;
+        // TODO: check if vertices are relative to voxel, NOT WORLD = floating point errors
+        /*float3 a = res.t.vertexA.position - res.mapPos + epsilon;
+        float3 b = res.t.vertexB.position - res.mapPos + epsilon;
+        float3 c = res.t.vertexC.position - res.mapPos + epsilon;
+        float3 ab = normalize(a - b);
+        float3 ac = normalize(a - c);
+        normal = normalize(cross(ac, ab));
+        normal = saturate(normal);*/
+
+        VoxelTris vt = generateTriangle(res.mapPos);
+        Triangle t = vt.triangles[res.triIndex];
+        float3 triCoords = barycentricCoords(t, hitPoint);
+        normal = normalize(t.vertexA.normal * triCoords.x + t.vertexB.normal * triCoords.y + t.vertexC.normal * triCoords.z);
+        
+        /*disToSurface = res.pathLength + res.voxelD;
         float diff = dot(normal, -_LightDirection);
         float diffIntensity = 1;
         voxelColor = getColorAtVoxel(hitPoint);
@@ -988,7 +1044,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         bool shadow = isShadow(camRay, normal, hitPoint);
         if (shadow) shadowColor *= 0.5;
 
-        surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;
+        surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;*/
         
 
         //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
@@ -1002,10 +1058,10 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         //color = float3(1, 1, 1);
         // depth blur
         //color *= (1 - d / maxStepCount * 1.75);
-        //color = normal * 0.5 + 0.5;
+        color = normal * 0.5 + 0.5;
     }
 
-    color = surfaceColor;
+    /*color = surfaceColor;
 
     // ocean
     float waveNoise = ridgedNoiseWave(hitPoint);
@@ -1038,12 +1094,12 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
             float disT = 1 - disToWaterSurface / disToSurface;
             oceanColor = lerp(_WaterColorShallow, _WaterColorDeep, disT);
             // wavebreak
-            /*if (disThroughOcean <= _WaveBreakDepth)
-            {
-                oceanColor = float3(1, 1, 1);
-                color = saturate(oceanColor * 1 / disThroughOcean);
-            }
-            else*/
+            //if (disThroughOcean <= _WaveBreakDepth)
+            //{
+            //    oceanColor = float3(1, 1, 1);
+            //    color = saturate(oceanColor * 1 / disThroughOcean);
+            //}
+            //else
             {
                 // diffuse
                 float diff = max(dot(oceanNormal, -_LightDirection), 0.0);
@@ -1070,7 +1126,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         const float atmos_epsilon = 0.0001;
         float3 pointInAtmosphere = camRay.origin + camRay.direction * (dstToAtmosphere + atmos_epsilon);
         color = calculateLight(pointInAtmosphere, camRay.direction, dstThroughAtmosphere - atmos_epsilon * 2, color);
-    }
+    }*/
 
     return color;
 }

@@ -418,7 +418,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: dbe8da35f0a0f7e48918b99009aac87a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  lookSensitivity: 10
+  lookSensitivity: 2
   moveSpeed: 20
 --- !u!114 &534669909
 MonoBehaviour:
@@ -476,7 +476,7 @@ MonoBehaviour:
   scatteringStrength: 0.2
   specularStrength: 0.31
   renderTicks: 1
-  resolution: 0.572
+  resolution: 0.79
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!1 &703060098
 GameObject:
