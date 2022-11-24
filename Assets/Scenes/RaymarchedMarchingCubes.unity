@@ -476,7 +476,7 @@ MonoBehaviour:
   scatteringStrength: 0.2
   specularStrength: 0.31
   renderTicks: 1
-  resolution: 0.79
+  resolution: 1
   voxelShader: {fileID: 7200000, guid: 638ea3265de06a94ab7069e73abe405b, type: 3}
 --- !u!1 &703060098
 GameObject:

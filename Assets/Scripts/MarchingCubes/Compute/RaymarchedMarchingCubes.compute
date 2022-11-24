@@ -1014,22 +1014,16 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     float disToSurface = 0;
     float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
     if (!res.miss) {
-        float3 normal = calculateNormal(res.mapPos);
-        // TODO: check if vertices are relative to voxel, NOT WORLD = floating point errors
-        /*float3 a = res.t.vertexA.position - res.mapPos + epsilon;
-        float3 b = res.t.vertexB.position - res.mapPos + epsilon;
-        float3 c = res.t.vertexC.position - res.mapPos + epsilon;
-        float3 ab = normalize(a - b);
-        float3 ac = normalize(a - c);
-        normal = normalize(cross(ac, ab));
-        normal = saturate(normal);*/
-
         VoxelTris vt = generateTriangle(res.mapPos);
         Triangle t = vt.triangles[res.triIndex];
         float3 triCoords = barycentricCoords(t, hitPoint);
+
+        // If flatshading
+        float3 normal = calculateNormal(res.mapPos);
+        // if smooth shading
         normal = normalize(t.vertexA.normal * triCoords.x + t.vertexB.normal * triCoords.y + t.vertexC.normal * triCoords.z);
         
-        /*disToSurface = res.pathLength + res.voxelD;
+        disToSurface = res.pathLength + res.voxelD;
         float diff = dot(normal, -_LightDirection);
         float diffIntensity = 1;
         voxelColor = getColorAtVoxel(hitPoint);
@@ -1044,7 +1038,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         bool shadow = isShadow(camRay, normal, hitPoint);
         if (shadow) shadowColor *= 0.5;
 
-        surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;*/
+        surfaceColor = (diffuseColor + _AmbientColor) * voxelColor * shadowColor;
         
 
         //res.mapPos.x == mapPosCenter[0].x && res.mapPos.y == mapPosCenter[0].y && res.mapPos.z == mapPosCenter[0].z
@@ -1061,7 +1055,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         color = normal * 0.5 + 0.5;
     }
 
-    /*color = surfaceColor;
+    color = surfaceColor;
 
     // ocean
     float waveNoise = ridgedNoiseWave(hitPoint);
@@ -1126,7 +1120,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         const float atmos_epsilon = 0.0001;
         float3 pointInAtmosphere = camRay.origin + camRay.direction * (dstToAtmosphere + atmos_epsilon);
         color = calculateLight(pointInAtmosphere, camRay.direction, dstThroughAtmosphere - atmos_epsilon * 2, color);
-    }*/
+    }
 
     return color;
 }
