@@ -23,6 +23,7 @@ float3 _GrassColor;
 float3 _SandColor;
 float3 _WaterColorShallow;
 float3 _WaterColorDeep;
+float _WaterDensityFalloff;
 float3 _DirtColor;
 float _Scale;
 float _Impact;
@@ -470,9 +471,8 @@ float getWaterNoise(int3 p)
 {
     float3 worldPos = p - float3(1, 1, 1) * 1000 / 2;
     float dis = distance(worldPos, planetCenter);
-    //float r = saturate(dis / _OceanRadius) * 2 - 1;
-    if (dis <= _OceanRadius) return -1;
-    return 1;
+    float r = saturate(dis / _OceanRadius);
+    return exp(-(1 - r)) * 2 - 1;
 }
 
 
@@ -756,7 +756,8 @@ CheckRayHitsTriangle hitsSurface(int3 mapPos, float3 start, float3 dir, float3 e
         hits.hits = false;
         return hits;
     }
-    float maxDst = distance(start, end) - epsilon;
+    //float maxDst = distance(start, end) - epsilon;
+    float maxDst = length(end) - epsilon;
     float d = 0 + epsilon;
     while (d < maxDst)
     {
@@ -865,6 +866,7 @@ struct RaymarchDDAResult
     bool isWaterRefracted;
     float3 waterSurfaceNorm;
     float3 waterRefractedDir;
+    float totalDistThroughWater;
 };
 
 RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
@@ -885,44 +887,77 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     bool isWaterRefracted = false;
     float3 waterSurfaceNorm = float3(0, 0, 0);
     float3 waterRefractedDir = float3(0, 0, 0);
+    float totalDistThroughWater = 0;
+    bool isTravelingThroughWater = false;
+    float3 waterEnterPos = float3(0, 0, 0);
     for (int i = 0; i < maxStepCount; i++) {
-        // TODO: Handle case where water has been hit before
-        
         ///////////////////
         // Hit Detection //
         ///////////////////
-        terrainHits = hitsSurface(mapPos, o + dir * pathLength, dir, o + getVoxelExitOffset(sideDist, deltaDist), 0); // check terraing hit
-        waterHits = hitsSurface(mapPos, o + dir * pathLength, dir, o + getVoxelExitOffset(sideDist, deltaDist), 1); // check water hit
+        float3 startPoint = o + dir * pathLength;
+        float3 travelDir = getVoxelExitOffset(sideDist, deltaDist);
+        float3 endPoint = startPoint + travelDir;
+        float maxDstThroughVoxel = length(travelDir);
+
+        // Increament dis through water
+        //if (isTravelingThroughWater && !waterHits.hits)
+        //{
+        //   totalDistThroughWater += maxDstThroughVoxel;
+        //}
+
+        terrainHits = hitsSurface(mapPos, startPoint, dir, endPoint, 0); // check terraing hit
+        waterHits = hitsSurface(mapPos, startPoint, dir, endPoint, 1); // check water hit
         // Case 1: terrain Voxel only
         if (terrainHits.hits && !waterHits.hits)
         {
             // no water will be rendered since terrain is opaque
+            if (isTravelingThroughWater)
+            {
+                float3 terrainSurfaceHitPoint = o + dir * (pathLength + terrainHits.d);
+                totalDistThroughWater += distance(waterEnterPos, terrainSurfaceHitPoint);
+            }
             break;
         }
         // Case 2: water Voxel only
         else if (!terrainHits.hits && waterHits.hits)
         {
             // water is translucent, so continue ray marching with refracted ray
-            /*float3 waterSurfaceHitPoint = o + dir * (pathLength + waterHits.d);
+            float3 waterSurfaceHitPoint = o + dir * (pathLength + waterHits.d);
 
             VoxelTris waterMeshTris = generateTriangle(mapPos, 1); // water mesh
             Triangle wT = waterMeshTris.triangles[waterHits.triIndex];
             float3 triCoords = barycentricCoords(wT, waterSurfaceHitPoint);
             waterSurfaceNorm = normalize(wT.vertexA.normal * triCoords.x + wT.vertexB.normal * triCoords.y + wT.vertexC.normal * triCoords.z);
-            */
-            waterSurfaceNorm = calculateNormal(mapPos);
+            
+            //waterSurfaceNorm = calculateNormal(mapPos);
+
+            float lookDirRelToWaterSurface = dot(waterSurfaceNorm, dir);
+            if (lookDirRelToWaterSurface < 0)
+            {
+                // entering water mesh
+                float maxDst = distance(startPoint, endPoint) - epsilon;
+                //totalDistThroughWater += maxDst - waterHits.d;
+                isTravelingThroughWater = true;
+                waterEnterPos = waterSurfaceHitPoint;
+            }
+            else
+            {
+                // exiting water mesh
+                // distance traveled till this voxel
+                totalDistThroughWater += distance(waterEnterPos, waterSurfaceHitPoint);
+                isTravelingThroughWater = false;
+            }
 
             //float _WaterRefractionIndex = 1.333;
             //waterRefractedDir = normalize(refract(dir, waterSurfaceNorm, _WaterRefractionIndex));
             waterRefractedDir = normalize(lerp(dir, -waterSurfaceNorm, 0.5));
             isWaterRefracted = true;
             // update deltaDist, rayStep, sideDist
-            deltaDist = abs(float3(1, 1, 1) * length(waterRefractedDir) / waterRefractedDir);
-            rayStep = int3(sign(waterRefractedDir));
-            sideDist = (sign(waterRefractedDir) * (float3(mapPos.x, mapPos.y, mapPos.z) - o) + (sign(waterRefractedDir) * 0.5) + 0.5) * deltaDist;
+            //deltaDist = abs(float3(1, 1, 1) * length(waterRefractedDir) / waterRefractedDir);
+            //rayStep = int3(sign(waterRefractedDir));
+            //sideDist = (sign(waterRefractedDir) * (float3(mapPos.x, mapPos.y, mapPos.z) - o) + (sign(waterRefractedDir) * 0.5) + 0.5) * deltaDist;
             // store hit and refraction details
             // continue raymarching
-            break;
         }
         // Case 3: Neither terrain voxel nor water voxel
             // continue raymarching
@@ -930,9 +965,21 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
         else if (terrainHits.hits && waterHits.hits)
         {
             // Case 4A: terrain hit before water
-            
-            // Case 4B: water hit before terrain
-            break;
+            if (terrainHits.d < waterHits.d)
+            {
+                if (isTravelingThroughWater)
+                {
+
+                }
+                break;
+            }
+            else {
+                // Case 4B: water hit before terrain
+                isWaterRefracted = true;
+                totalDistThroughWater += terrainHits.d - waterHits.d;
+                isTravelingThroughWater = true;
+                break;
+            }
         }
         //////////////////////////
         // Continue raymarching //
@@ -981,6 +1028,7 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     result.isWaterRefracted = isWaterRefracted;
     result.waterSurfaceNorm = waterSurfaceNorm;
     result.waterRefractedDir = waterRefractedDir;
+    result.totalDistThroughWater = totalDistThroughWater;
     return result;
 }
 
@@ -1113,7 +1161,13 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 
     if (res.isWaterRefracted)
     {
-        return _WaterColorShallow;
+        if (res.totalDistThroughWater < 0)
+        {
+            return float3(1, 0, 0);
+        }
+        float depthAmt = saturate(1-exp(_WaterDensityFalloff * -res.totalDistThroughWater));
+        //return lerp(_WaterColorShallow, _WaterColorDeep, depthAmt);
+        return float3(1, 1, 1) * depthAmt;
     }
 
     if (!res.miss) {
@@ -1127,8 +1181,8 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         normal = normalize(t.vertexA.normal * triCoords.x + t.vertexB.normal * triCoords.y + t.vertexC.normal * triCoords.z);
 
         // material
-        float sandNoiseDisappearingFallOff = 0.5; // higher = sooner it disappears
-        float sandNois = lerp(1, sandNoise(hitPoint), exp(0.1 * -abs(res.pathLength)) );
+        float sandNoiseDisappearingFallOff = 0.1; // higher = sooner it disappears
+        float sandNois = lerp(1, sandNoise(hitPoint), exp(sandNoiseDisappearingFallOff * -abs(res.pathLength)) );
         //float sandFadeOutDis = 10;
         //if (res.pathLength < sandFadeOutDis)
         { // ignore if camera is too far away
@@ -1237,10 +1291,10 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
                 color = lerp(oceanColor, surfaceColor, saturate(1 / disThroughOcean));
             }
         }
-    }
+    }*/
     
     // atmoshpere
-    float2 atmosphereSphere = raySphere(planetCenter, _AtmosphereRadius, camRay.origin, camRay.direction);
+    /*float2 atmosphereSphere = raySphere(planetCenter, _AtmosphereRadius, camRay.origin, camRay.direction);
     float dstToAtmosphere = atmosphereSphere.x;
     float dstThroughAtmosphere = disToSurface - dstToAtmosphere;
     if (res.miss) dstThroughAtmosphere = atmosphereSphere.y;

@@ -44,6 +44,8 @@ public class MarchingCubesRayMarch : MonoBehaviour
     float oceanRadius;
     [SerializeField, Tooltip("Depth at which waves form on the shores")]
     float waveBreakDepth;
+    [SerializeField]
+    float waterDensityFallOff;
 
     [Header("Atmosphere Settings")]
     [SerializeField]
@@ -177,6 +179,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
         voxelShader.SetFloat("_AtmosphereDensityFalloff", atmosphereDensityFallOff);
         voxelShader.SetInt("_OpticalDepthSteps", opticalDepthSteps);
         voxelShader.SetInt("_AtmosphereSteps", atmosphereSteps);
+        voxelShader.SetFloat("_WaterDensityFalloff", waterDensityFallOff);
         float scatterR = Mathf.Pow(400 / wavelengths.x, 4) * scatteringStrength;
         float scatterG = Mathf.Pow(400 / wavelengths.y, 4) * scatteringStrength;
         float scatterB = Mathf.Pow(400 / wavelengths.z, 4) * scatteringStrength;

@@ -465,11 +465,12 @@ MonoBehaviour:
   sandColor: {r: 0.9058824, g: 0.75294125, b: 0.5647059, a: 0}
   waterColorShallow: {r: 0, g: 0.56397367, b: 1, a: 0}
   waterColorDeep: {r: 0, g: 0.15508296, b: 0.5471698, a: 0}
-  brushStrength: 0.001
-  brushSize: 2
+  brushStrength: 0.005
+  brushSize: 10
   planetRadius: 300
-  oceanRadius: 290
+  oceanRadius: 940
   waveBreakDepth: 0.74
+  waterDensityFallOff: 0.01
   atmosphereRadius: 350
   atmosphereDensityFallOff: 3.62
   opticalDepthSteps: 5
@@ -709,7 +710,7 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 45.2
+  m_fontSize: 44.95
   m_fontSizeBase: 36
   m_fontWeight: 400
   m_enableAutoSizing: 1
