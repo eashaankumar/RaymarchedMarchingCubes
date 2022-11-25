@@ -907,6 +907,18 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
 
         terrainHits = hitsSurface(mapPos, startPoint, dir, endPoint, 0); // check terraing hit
         waterHits = hitsSurface(mapPos, startPoint, dir, endPoint, 1); // check water hit
+
+        float3 waterSurfaceHitPoint = o + dir * (pathLength + waterHits.d);
+
+        if (waterHits.hits)
+        {
+            // water surface normal
+            VoxelTris waterMeshTris = generateTriangle(mapPos, 1); // water mesh
+            Triangle wT = waterMeshTris.triangles[waterHits.triIndex];
+            float3 triCoords = barycentricCoords(wT, waterSurfaceHitPoint);
+            waterSurfaceNorm = normalize(wT.vertexA.normal * triCoords.x + wT.vertexB.normal * triCoords.y + wT.vertexC.normal * triCoords.z);
+        }
+
         // Case 1: terrain Voxel only
         if (terrainHits.hits && !waterHits.hits)
         {
@@ -922,13 +934,6 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
         else if (!terrainHits.hits && waterHits.hits)
         {
             // water is translucent, so continue ray marching with refracted ray
-            float3 waterSurfaceHitPoint = o + dir * (pathLength + waterHits.d);
-
-            VoxelTris waterMeshTris = generateTriangle(mapPos, 1); // water mesh
-            Triangle wT = waterMeshTris.triangles[waterHits.triIndex];
-            float3 triCoords = barycentricCoords(wT, waterSurfaceHitPoint);
-            waterSurfaceNorm = normalize(wT.vertexA.normal * triCoords.x + wT.vertexB.normal * triCoords.y + wT.vertexC.normal * triCoords.z);
-            
             //waterSurfaceNorm = calculateNormal(mapPos);
 
             float lookDirRelToWaterSurface = dot(waterSurfaceNorm, dir);
@@ -1161,13 +1166,9 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
 
     if (res.isWaterRefracted)
     {
-        if (res.totalDistThroughWater < 0)
-        {
-            return float3(1, 0, 0);
-        }
         float depthAmt = saturate(1-exp(_WaterDensityFalloff * -res.totalDistThroughWater));
-        //return lerp(_WaterColorShallow, _WaterColorDeep, depthAmt);
-        return float3(1, 1, 1) * depthAmt;
+        return lerp(_WaterColorShallow, _WaterColorDeep, depthAmt);
+        //return res.waterSurfaceNorm * 0.5 + 0.5;
     }
 
     if (!res.miss) {
