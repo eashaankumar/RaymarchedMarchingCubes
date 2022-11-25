@@ -469,8 +469,10 @@ float getNoise(int3 p)
 float getWaterNoise(int3 p)
 {
     float3 worldPos = p - float3(1, 1, 1) * 1000 / 2;
-    float r = distance(worldPos, planetCenter) / _OceanRadius;
-    return r * 2 - 1;
+    float dis = distance(worldPos, planetCenter);
+    //float r = saturate(dis / _OceanRadius) * 2 - 1;
+    if (dis <= _OceanRadius) return -1;
+    return 1;
 }
 
 
@@ -840,6 +842,18 @@ void terraform(int3 mapPos, int2 id, int width, int height)
     }*/
 }
 
+float3 barycentricCoords(Triangle t, float3 P)
+{
+    float3 A = t.vertexA.position;
+    float3 B = t.vertexB.position;
+    float3 C = t.vertexC.position;
+
+    float baryA = ((B.y - C.y) * (P.x - C.x) + (C.x - B.x) * (P.y - C.y)) / ((B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y));
+    float baryB = ((C.y - A.y) * (P.x - C.x) + (A.x - C.x) * (P.y - C.y)) / ((B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y));
+    float baryC = 1 - baryA - baryB;
+    return float3(baryA, baryB, baryC);
+}
+
 struct RaymarchDDAResult
 {
     int3 mapPos;
@@ -847,6 +861,10 @@ struct RaymarchDDAResult
     float pathLength; // distance to solid voxel entry face (of the cube representing the voxel, not the triangles)
     int triIndex;
     float voxelD; // how far the ray travels inside solid voxel before hitting a triangle
+
+    bool isWaterRefracted;
+    float3 waterSurfaceNorm;
+    float3 waterRefractedDir;
 };
 
 RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
@@ -864,7 +882,12 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     bool miss = false;
     float pathLength = 0;
     CheckRayHitsTriangle terrainHits, waterHits;
+    bool isWaterRefracted = false;
+    float3 waterSurfaceNorm = float3(0, 0, 0);
+    float3 waterRefractedDir = float3(0, 0, 0);
     for (int i = 0; i < maxStepCount; i++) {
+        // TODO: Handle case where water has been hit before
+        
         ///////////////////
         // Hit Detection //
         ///////////////////
@@ -880,12 +903,26 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
         else if (!terrainHits.hits && waterHits.hits)
         {
             // water is translucent, so continue ray marching with refracted ray
-            float3 surfaceNormal = float3(0, 0, 0);
-            float _WaterRefractionIndex = 1.333;
-            float3 newDir = refract(dir, surfaceNormal, _WaterRefractionIndex);
+            /*float3 waterSurfaceHitPoint = o + dir * (pathLength + waterHits.d);
+
+            VoxelTris waterMeshTris = generateTriangle(mapPos, 1); // water mesh
+            Triangle wT = waterMeshTris.triangles[waterHits.triIndex];
+            float3 triCoords = barycentricCoords(wT, waterSurfaceHitPoint);
+            waterSurfaceNorm = normalize(wT.vertexA.normal * triCoords.x + wT.vertexB.normal * triCoords.y + wT.vertexC.normal * triCoords.z);
+            */
+            waterSurfaceNorm = calculateNormal(mapPos);
+
+            //float _WaterRefractionIndex = 1.333;
+            //waterRefractedDir = normalize(refract(dir, waterSurfaceNorm, _WaterRefractionIndex));
+            waterRefractedDir = normalize(lerp(dir, -waterSurfaceNorm, 0.5));
+            isWaterRefracted = true;
             // update deltaDist, rayStep, sideDist
+            deltaDist = abs(float3(1, 1, 1) * length(waterRefractedDir) / waterRefractedDir);
+            rayStep = int3(sign(waterRefractedDir));
+            sideDist = (sign(waterRefractedDir) * (float3(mapPos.x, mapPos.y, mapPos.z) - o) + (sign(waterRefractedDir) * 0.5) + 0.5) * deltaDist;
             // store hit and refraction details
             // continue raymarching
+            break;
         }
         // Case 3: Neither terrain voxel nor water voxel
             // continue raymarching
@@ -895,6 +932,7 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
             // Case 4A: terrain hit before water
             
             // Case 4B: water hit before terrain
+            break;
         }
         //////////////////////////
         // Continue raymarching //
@@ -940,7 +978,9 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     //result.normal = normalize(hits.tri.vertexA.normal + hits.tri.vertexB.normal + hits.tri.vertexC.normal);
     result.triIndex = terrainHits.triIndex;
     result.voxelD = terrainHits.d;
-
+    result.isWaterRefracted = isWaterRefracted;
+    result.waterSurfaceNorm = waterSurfaceNorm;
+    result.waterRefractedDir = waterRefractedDir;
     return result;
 }
 
@@ -1042,18 +1082,6 @@ float3 calculateLight(float3 rayOrigin, float3 rayDir, float3 rayLength, float3 
     return minI;
 }*/
 
-float3 barycentricCoords(Triangle t, float3 P)
-{
-    float3 A = t.vertexA.position;
-    float3 B = t.vertexB.position;
-    float3 C = t.vertexC.position;
-
-    float baryA = ((B.y - C.y) * (P.x - C.x) + (C.x - B.x)*(P.y - C.y)) / ((B.y - C.y)*(A.x - C.x) + (C.x - B.x)*(A.y-C.y));
-    float baryB = ((C.y - A.y) * (P.x - C.x) + (A.x - C.x)*(P.y-C.y)) / ((B.y-C.y)*(A.x-C.x) + (C.x-B.x)*(A.y-C.y));
-    float baryC = 1 - baryA - baryB;
-    return float3(baryA, baryB, baryC);
-}
-
 float2 sphericalToUV(float3 p)
 {
     // http://raytracerchallenge.com/bonus/texture-mapping.html
@@ -1082,6 +1110,12 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     float3 diffuseColor = float3(0, 0, 0);
     float disToSurface = 0;
     float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
+
+    if (res.isWaterRefracted)
+    {
+        return _WaterColorShallow;
+    }
+
     if (!res.miss) {
         VoxelTris vt = generateTriangle(res.mapPos, 0); // terrain
         Triangle t = vt.triangles[res.triIndex];
