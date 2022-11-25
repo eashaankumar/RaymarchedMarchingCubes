@@ -74,7 +74,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
     ComputeBuffer mapPosCenterBuffer;
     Vector3Int[] mapPosCenter;
 
-    RenderTexture target, density;
+    RenderTexture target, density, waterDensity;
     Camera cam;
     Light sun;
 
@@ -150,6 +150,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
         brushStrength = Mathf.Abs(brushStrength);
         voxelShader.SetTexture(kernelIndex, "Destination", target);
         voxelShader.SetTexture(kernelIndex, "Density", density);
+        voxelShader.SetTexture(kernelIndex, "WaterDensity", waterDensity);
         voxelShader.SetTexture(kernelIndex, "SandTexture", sandTexture);
         voxelShader.SetTexture(kernelIndex, "WaterTexture", waterTexture);
         voxelShader.SetMatrix("_CameraToWorld", cam.cameraToWorldMatrix);
@@ -212,6 +213,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
             target.Create();
         }
         Create3DTexture(ref density, 1000, "Density");
+        Create3DTexture(ref waterDensity, 1000, "WaterDensity");
     }
 
     void Create3DTexture(ref RenderTexture texture, int size, string name)

@@ -6,6 +6,7 @@
 
 RWTexture2D<float4> Destination;
 RWTexture3D<float> Density;
+RWTexture3D<float> WaterDensity;
 Texture2D<float4> SandTexture; SamplerState samplerSandTexture;
 Texture2D<float4> WaterTexture; SamplerState samplerWaterTexture;
 
@@ -448,17 +449,14 @@ float getPlanetNoise(int3 p)
 
 float density(int3 p)
 {
-    /*float3 p = float3(c)+float3(1, 1, 1) * 0.5;
-    const float3 off = float3(2134, 213, 24);
-    float d = distance(p, planetCtr);
-    float3 pp = p + noisePosition;
-    float noise = lerpF(-1.0, 1.0, d / (planetRadius * 2));
-    return noise + (ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * 2 - 1) * surfaceNoiseImpact;*/
     float noise = getPlanetNoise(p);
     float den = Density[p + int3(1,1,1) * 1000/2];
-    //return noise + ridgedNoise2(normalize(pp * surfaceNoiseScale), 3, 2.0, 2.0) * surfaceNoiseImpact;
-    //return noise + ridgedNoise(normalize(pp * _Scale)) * _Impact;
     return noise + den;
+}
+
+float waterDensity(int3 p)
+{
+    return WaterDensity[p + int3(1, 1, 1) * 1000 / 2];
 }
 
 float getNoise(int3 p)
@@ -468,13 +466,27 @@ float getNoise(int3 p)
     return ridgedNoise2(pp * _Scale, _Octaves, 2.0, 2.0) * _Impact;
 }
 
-
-int getBit(int3 v)
+float getWaterNoise(int3 p)
 {
-    return density(v) < 0 ? 0 : 1;
+    float3 worldPos = p - float3(1, 1, 1) * 1000 / 2;
+    float r = distance(worldPos, planetCenter) / _OceanRadius;
+    return r * 2 - 1;
 }
 
-static int cellCase(int3 v0)
+
+int getBit(int3 v, int t)
+{
+    if (t == 0)
+    {
+        return density(v) < 0 ? 0 : 1;
+    }
+    else 
+    {
+        return waterDensity(v) < 0 ? 0 : 1;
+    }
+}
+
+static int cellCase(int3 v0, int t)
 {
     int v0x = v0.x, v0y = v0.y, v0z = v0.z;
     int3 v1 = int3(v0x, v0y + 1, v0z);
@@ -485,11 +497,10 @@ static int cellCase(int3 v0)
     int3 v6 = int3(v0x + 1, v0y + 1, v0z + 1);
     int3 v7 = int3(v0x + 1, v0y, v0z + 1);
 
-    int caseByteArray[8] = { getBit(v7), getBit(v6), getBit(v5), getBit(v4), getBit(v3), getBit(v2), getBit(v1), getBit(v0) };
-    int caseByte = getBit(v7) << 7 | getBit(v6) << 6 |
-        getBit(v5) << 5 | getBit(v4) << 4 |
-        getBit(v3) << 3 | getBit(v2) << 2 |
-        getBit(v1) << 1 | getBit(v0);
+    int caseByte = getBit(v7, t) << 7 | getBit(v6, t) << 6 |
+        getBit(v5, t) << 5 | getBit(v4, t) << 4 |
+        getBit(v3, t) << 3 | getBit(v2, t) << 2 |
+        getBit(v1, t) << 1 | getBit(v0, t);
     return caseByte;
 }
 
@@ -502,9 +513,16 @@ float invLerp(float from, float to, float value) {
     return (value - from) / (to - from);
 }
 
-float InterpolateTriangleVertexOnCubeEdge(int3 cornerA, int3 cornerB)
+float InterpolateTriangleVertexOnCubeEdge(int3 cornerA, int3 cornerB, int t)
 {
-    return invLerp(density(cornerA), density(cornerB), 0.0);
+    if (t == 0)
+    {
+        return invLerp(density(cornerA), density(cornerB), 0.0);
+    }
+    else
+    {
+        return invLerp(waterDensity(cornerA), waterDensity(cornerB), 0.0);
+    }
 }
 
 float3 NoiseGridToWorldPos(int3 p)
@@ -524,13 +542,13 @@ float3 calculateNormal(int3 coord)
     //return normalize(coord);
 }
 
-Vertex VertexFromInterpolatedNoise(int edgeId, int3 cubePos)
+Vertex VertexFromInterpolatedNoise(int edgeId, int3 cubePos, int t)
 {
     Vertex v;
     int2 edgeCorners = edgeToCorners[edgeId];
     int3 cornerA = CubeCornersToChunkNoiseGridPoints(edgeCorners.x, cubePos);
     int3 cornerB = CubeCornersToChunkNoiseGridPoints(edgeCorners.y, cubePos);
-    float time = InterpolateTriangleVertexOnCubeEdge(cornerA, cornerB);
+    float time = InterpolateTriangleVertexOnCubeEdge(cornerA, cornerB, t);
     float3 cornerAWorld = NoiseGridToWorldPos(cornerA);
     float3 cornerBWorld = NoiseGridToWorldPos(cornerB);
     v.position = lerp(cornerAWorld, cornerBWorld, time);
@@ -555,9 +573,9 @@ struct VoxelTris
     int numTris;
 };
 
-VoxelTris generateTriangle(int3 id)
+VoxelTris generateTriangle(int3 id, int dtype)
 {
-    int caseByte = cellCase(id);
+    int caseByte = cellCase(id, dtype);
     int numTris = caseToNumPolys[caseByte];
     VoxelTris vTris;
     vTris.numTris = numTris;
@@ -574,9 +592,9 @@ VoxelTris generateTriangle(int3 id)
     {
         int edgesOfTri[3] = fromVec2ECL(caseByte, t);
 
-        Vertex triVertexOnEdge1 = VertexFromInterpolatedNoise(edgesOfTri[0], id);
-        Vertex triVertexOnEdge2 = VertexFromInterpolatedNoise(edgesOfTri[1], id);
-        Vertex triVertexOnEdge3 = VertexFromInterpolatedNoise(edgesOfTri[2], id);
+        Vertex triVertexOnEdge1 = VertexFromInterpolatedNoise(edgesOfTri[0], id, dtype);
+        Vertex triVertexOnEdge2 = VertexFromInterpolatedNoise(edgesOfTri[1], id, dtype);
+        Vertex triVertexOnEdge3 = VertexFromInterpolatedNoise(edgesOfTri[2], id, dtype);
         Triangle tri;
         tri.vertexA = triVertexOnEdge1;
         tri.vertexB = triVertexOnEdge2;
@@ -727,10 +745,10 @@ struct CheckRayHitsTriangle
 // steps through solid voxel and detects hit with triangle
 // start: worldPos of ray entry into voxel
 // end: worldPos of ray exit out of voxel
-CheckRayHitsTriangle hitsSurface(int3 mapPos, float3 start, float3 dir, float3 end)
+CheckRayHitsTriangle hitsSurface(int3 mapPos, float3 start, float3 dir, float3 end, int t)
 {
     CheckRayHitsTriangle hits;
-    VoxelTris triangles = generateTriangle(mapPos);
+    VoxelTris triangles = generateTriangle(mapPos, t);
     if (triangles.numTris == 0)
     {
         hits.hits = false;
@@ -845,13 +863,42 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     bool3 mask;
     bool miss = false;
     float pathLength = 0;
-    CheckRayHitsTriangle hits;
+    CheckRayHitsTriangle terrainHits, waterHits;
     for (int i = 0; i < maxStepCount; i++) {
-        hits = hitsSurface(mapPos, o + dir * pathLength, dir, o + getVoxelExitOffset(sideDist, deltaDist));
-        if (hits.hits) 
+        ///////////////////
+        // Hit Detection //
+        ///////////////////
+        terrainHits = hitsSurface(mapPos, o + dir * pathLength, dir, o + getVoxelExitOffset(sideDist, deltaDist), 0); // check terraing hit
+        waterHits = hitsSurface(mapPos, o + dir * pathLength, dir, o + getVoxelExitOffset(sideDist, deltaDist), 1); // check water hit
+        // Case 1: terrain Voxel only
+        if (terrainHits.hits && !waterHits.hits)
         {
+            // no water will be rendered since terrain is opaque
             break;
         }
+        // Case 2: water Voxel only
+        else if (!terrainHits.hits && waterHits.hits)
+        {
+            // water is translucent, so continue ray marching with refracted ray
+            float3 surfaceNormal = float3(0, 0, 0);
+            float _WaterRefractionIndex = 1.333;
+            float3 newDir = refract(dir, surfaceNormal, _WaterRefractionIndex);
+            // update deltaDist, rayStep, sideDist
+            // store hit and refraction details
+            // continue raymarching
+        }
+        // Case 3: Neither terrain voxel nor water voxel
+            // continue raymarching
+        // Case 4: Both terrain voxel and water voxel
+        else if (terrainHits.hits && waterHits.hits)
+        {
+            // Case 4A: terrain hit before water
+            
+            // Case 4B: water hit before terrain
+        }
+        //////////////////////////
+        // Continue raymarching //
+        //////////////////////////
         if (sideDist.x < sideDist.y) {
             if (sideDist.x < sideDist.z) {
                 pathLength = sideDist.x;
@@ -891,8 +938,8 @@ RaymarchDDAResult raymarchDDA(float3 o, float3 dir, int maxStepCount)
     result.miss = miss;
     result.pathLength = pathLength;
     //result.normal = normalize(hits.tri.vertexA.normal + hits.tri.vertexB.normal + hits.tri.vertexC.normal);
-    result.triIndex = hits.triIndex;
-    result.voxelD = hits.d;
+    result.triIndex = terrainHits.triIndex;
+    result.voxelD = terrainHits.d;
 
     return result;
 }
@@ -1036,7 +1083,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     float disToSurface = 0;
     float3 hitPoint = camRay.origin + camRay.direction * (res.pathLength + res.voxelD);
     if (!res.miss) {
-        VoxelTris vt = generateTriangle(res.mapPos);
+        VoxelTris vt = generateTriangle(res.mapPos, 0); // terrain
         Triangle t = vt.triangles[res.triIndex];
         float3 triCoords = barycentricCoords(t, hitPoint);
 
@@ -1099,7 +1146,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
     color = surfaceColor;
 
     // ocean
-    float waveNoise = ridgedNoiseWave(hitPoint);
+    /*float waveNoise = ridgedNoiseWave(hitPoint);
     float2 oceanRaySphere = raySphere(planetCenter, _OceanRadius, camRay.origin, camRay.direction);
     float3 oceanColor = float3(0, 0, 0);
     float disToWaterSurface = oceanRaySphere.x;
@@ -1168,7 +1215,7 @@ float3 GetColorAtRaymarchResult(RaymarchDDAResult res, Ray camRay)
         const float atmos_epsilon = 0.0001;
         float3 pointInAtmosphere = camRay.origin + camRay.direction * (dstToAtmosphere + atmos_epsilon);
         color = calculateLight(pointInAtmosphere, camRay.direction, dstThroughAtmosphere - atmos_epsilon * 2, color);
-    }
+    }*/
 
     return color;
 }
@@ -1271,4 +1318,5 @@ void CSMain(uint2 id : SV_DispatchThreadID)
 void DensityKernel(uint3 id : SV_DispatchThreadID)
 {
     Density[id.xyz] = getNoise(id);
+    WaterDensity[id.xyz] = getWaterNoise(id);
 }
