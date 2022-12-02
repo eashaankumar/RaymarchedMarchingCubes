@@ -453,6 +453,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c7bcc638254a40a4ab76be09cb7fadff, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  targetFPS: 300
   scale: 0.005
   impact: 0.05
   octaves: 6

@@ -6,6 +6,8 @@ using UnityEngine;
 public class MarchingCubesRayMarch : MonoBehaviour
 {
     [SerializeField]
+    int targetFPS;
+    [SerializeField]
     float scale;
     [SerializeField]
     float impact;
@@ -86,6 +88,7 @@ public class MarchingCubesRayMarch : MonoBehaviour
 
     void Start()
     {
+        Application.targetFrameRate = targetFPS;
         kernelIndex = voxelShader.FindKernel("CSMain");
 
         mapPosCenterBuffer = new ComputeBuffer(1, sizeof(int) * 3);
