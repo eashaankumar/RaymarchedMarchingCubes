@@ -1,0 +1,198 @@
+struct Vertex {
+    float3 position;
+    float3 normal;
+};
+
+struct Triangle {
+    Vertex vertexC;
+    Vertex vertexB;
+    Vertex vertexA;
+};
+
+struct EdgeConnection
+{
+    int edges[3];
+};
+
+struct VoxelTris
+{
+    Triangle triangles[6];
+    int numTris;
+};
+
+struct Ray {
+    float3 origin;
+    float3 direction;
+};
+
+struct SDFTriRes
+{
+    float sdf;
+    int triI;
+};
+
+struct CheckRayHitsTriangle
+{
+    bool hits;
+    int triIndex;
+    float d;
+};
+
+struct RaymarchDDAResult
+{
+    int3 mapPos;
+    bool miss;
+    float pathLength; // distance to solid voxel entry face (of the cube representing the voxel, not the triangles)
+    int triIndex;
+    float voxelD; // how far the ray travels inside solid voxel before hitting a triangle
+
+    bool isWaterRefracted;
+    float3 waterSurfaceNorm;
+    float3 waterRefractedDir;
+    float totalDistThroughWater;
+};
+
+
+static const float maxFloat = 3.402823466e+38;
+static const float PI = 3.1415925;
+
+float lerpF(float a, float b, float w) {
+    return a + w * (b - a);
+}
+
+float invLerp(float from, float to, float value) {
+    return (value - from) / (to - from);
+}
+
+
+float3 diff(float3 a, float3 b) {
+    return float3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+float dot(float3 a, float3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+float sdSphere(float3 p, float r, float3 c) { return length(p - c) - r; }
+
+float dot2(float3 v) { return dot(v, v); }
+float udTriangle(float3 v1, float3 v2, float3 v3, float3 p)
+{
+    // prepare data    
+    float3 v21 = v2 - v1; float3 p1 = p - v1;
+    float3 v32 = v3 - v2; float3 p2 = p - v2;
+    float3 v13 = v1 - v3; float3 p3 = p - v3;
+    float3 nor = cross(v21, v13);
+
+    return sqrt( // inside/outside test    
+        (sign(dot(cross(v21, nor), p1)) +
+            sign(dot(cross(v32, nor), p2)) +
+            sign(dot(cross(v13, nor), p3)) < 2.0)
+        ?
+        // 3 edges    
+        min(min( 
+            dot2(v21 * clamp(dot(v21, p1) / dot2(v21), 0.0, 1.0) - p1),
+            dot2(v32 * clamp(dot(v32, p2) / dot2(v32), 0.0, 1.0) - p2)),
+            dot2(v13 * clamp(dot(v13, p3) / dot2(v13), 0.0, 1.0) - p3))
+        :
+        // 1 face    
+        dot(nor, p1) * dot(nor, p1) / dot2(nor));
+}
+float udTriangle2(Triangle t, float3 p)
+{
+    return udTriangle(t.vertexA.position, t.vertexB.position, t.vertexC.position, p);
+}
+
+float3 barycentricCoords(Triangle t, float3 P)
+{
+    float3 A = t.vertexA.position;
+    float3 B = t.vertexB.position;
+    float3 C = t.vertexC.position;
+
+    float baryA = ((B.y - C.y) * (P.x - C.x) + (C.x - B.x) * (P.y - C.y)) / ((B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y));
+    float baryB = ((C.y - A.y) * (P.x - C.x) + (A.x - C.x) * (P.y - C.y)) / ((B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y));
+    float baryC = 1 - baryA - baryB;
+    return float3(baryA, baryB, baryC);
+}
+
+// https://github.com/SebLague/Solar-System/blob/Development/Assets/Scripts/Celestial/Shaders/Includes/Math.cginc
+float2 raySphere(float3 sphereCentre, float sphereRadius, float3 rayOrigin, float3 rayDir) {
+    float3 offset = rayOrigin - sphereCentre;
+    float a = 1; // Set to dot(rayDir, rayDir) if rayDir might not be normalized
+    float b = 2 * dot(offset, rayDir);
+    float c = dot(offset, offset) - sphereRadius * sphereRadius;
+    float d = b * b - 4 * a * c; // Discriminant from quadratic formula
+
+    // Number of intersections: 0 when d < 0; 1 when d = 0; 2 when d > 0
+    if (d > 0) {
+        float s = sqrt(d);
+        float dstToSphereNear = max(0, (-b - s) / (2 * a));
+        float dstToSphereFar = (-b + s) / (2 * a);
+
+        // Ignore intersections that occur behind the ray
+        if (dstToSphereFar >= 0) {
+            return float2(dstToSphereNear, dstToSphereFar - dstToSphereNear);
+        }
+    }
+    // Ray did not intersect sphere
+
+    return float2(maxFloat, 0);
+}
+
+float2 sphericalToUV(float3 p, float3 center)
+{
+    // http://raytracerchallenge.com/bonus/texture-mapping.html
+    float theta = atan2(p.x, p.z); 
+    float3 vec = p - center; 
+    float radius = length(vec);
+    float phi = acos(p.y / radius);
+    float raw_u = theta / (2 * PI);
+    float u = 1 - (raw_u + 0.5);
+    float v = 1 - phi / PI;
+    return float2(u, v);
+}
+
+float gaussian(int2 p, float std)
+{
+    return 1 / (2 * PI * std * std) * exp(-(p.x * p.x + p.y * p.y) / (2 * std * std));
+}
+
+SDFTriRes sdfTris(VoxelTris tris, float3 p)
+{
+    SDFTriRes res;
+    res.triI = 0;
+    res.sdf = udTriangle2(tris.triangles[0], p);
+    float sdf = 0;
+    if (tris.numTris >= 2)
+    {
+        sdf = min(res.sdf, udTriangle2(tris.triangles[1], p));
+        if (sdf < res.sdf) res.triI = 1;
+        res.sdf = sdf;
+    }
+    if (tris.numTris >= 3)
+    {
+        sdf = min(res.sdf, udTriangle2(tris.triangles[2], p));
+        if (sdf < res.sdf) res.triI = 2;
+        res.sdf = sdf;
+    }
+    if (tris.numTris >= 4)
+    {
+        sdf = min(res.sdf, udTriangle2(tris.triangles[3], p));
+        if (sdf < res.sdf) res.triI = 3;
+        res.sdf = sdf;
+    }
+    if (tris.numTris >= 5)
+    {
+        sdf = min(res.sdf, udTriangle2(tris.triangles[4], p));
+        if (sdf < res.sdf) res.triI = 4;
+        res.sdf = sdf;
+    }
+    if (tris.numTris >= 6)
+    {
+        sdf = min(res.sdf, udTriangle2(tris.triangles[5], p));
+        if (sdf < res.sdf) res.triI = 5;
+        res.sdf = sdf;
+    }
+
+    return res;
+}

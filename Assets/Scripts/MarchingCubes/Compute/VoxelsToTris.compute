@@ -1,6 +1,6 @@
 #pragma kernel CSMain
 
-#include "Noise.compute"
+#include "Utils/Noise.compute"
 
 struct Vertex {
     float3 position;

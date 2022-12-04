@@ -472,12 +472,12 @@ MonoBehaviour:
   oceanRadius: 940
   waveBreakDepth: 0.74
   waterDensityFallOff: 0.01
-  atmosphereRadius: 350
+  atmosphereRadius: 527.4
   atmosphereDensityFallOff: 3.62
   opticalDepthSteps: 5
   atmosphereSteps: 5
   wavelengths: {x: 700, y: 530, z: 440}
-  scatteringStrength: 0.2
+  scatteringStrength: 0.02
   specularStrength: 0.31
   renderTicks: 1
   resolution: 0.522
